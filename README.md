@@ -38,12 +38,21 @@ Chroot-tool requires `debootstrap` and `guile` to be installed on host machine.
 
 Creates debian-based image inside DIR using debootstrap.
 
+Example:
+* `chroot-tool.sh create -d /var/chroots/my-chroot-1` - will create image in `/var/chroots/my-chroot-1` directory.
+* `chroot-tool.sh create` - without -d specified, chroot-tool operates in current directory.
+
 ## turn on
 
 **chroot-tool.sh on -d DIR**
 
 1. Mounts user-defined directories from host to chroot.
 2. Mounts maintenance directories: /etc, /proc, so on.
+
+The "on" command is runned automatically by chroot-tool before executing any steps.
+
+Example:
+* `chroot-tool.sh on -d /var/chroots/my-chroot-1`
 
 ## execute command inside chroot
 
@@ -58,12 +67,19 @@ Creates debian-based image inside DIR using debootstrap.
 
 Additionally, if `chroot.d/host-cmd` exist, executes it before going into chroot.
 
+Example:
+* `chroot-tool.sh run start`
+* `chroot-tool.sh run "rebuild-index alfa"`
+
 ## turn off
 
 **chroot-tool.sh off -d DIR**
 
 1. Executes "stop" command inside chroot.
 2. Unmounts all mounted directories.
+
+Example:
+* `chroot-tool.sh off -d /var/chroots/my-chroot-1`
 
 # Custom directories
 
