@@ -29,7 +29,7 @@ by the way binding all required directores before that.
 
 Chroot-tool requires `debootstrap` and `guile` to be installed on host machine.
 
-* `apt-get install debootstrap guile`
+* `apt-get install debootstrap guile-2.0`
 
 # Usage
 
