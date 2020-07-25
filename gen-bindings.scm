@@ -92,91 +92,87 @@
 (define params-path (join-path chroot-dir "chroot.d" "conf.sh"))
 (define conf-path (join-path chroot-dir "chroot.d" "tool.conf"))
 
-; (dump-error "gen-bindings: conf.sh path: ~S~%" params-path)
+; РАЗБОР СТРОКИ С ОПИСАНИЕМ ТОЧЕК МОНТИРОВАНИЯ В Μ-JSON ФОРМАТЕ
+
+; Процедура выбора источника по-умолчанию. Сделана для того, чтобы облегчить
+; код в chroot-tool.sh, и не разбирать там различные варианты. Пока всё
+; просто: если речь о tmpfs, возвращаем none; если о bind или o bind-ro
+; возвращаем саму точку монтирования. В остальных случаях возвращаем пустую
+; строку и это должно вызывать ошибку.
+(define (default-source fs t)
+  (cond ((tmpfs? fs) "none") 
+        ((bind? fs) t)
+        (else "")))  
+
+; Процедура выбора опций по умолчанию
+(define (default-options fs)
+  (cond ((tmpfs? fs) "noexec,nosuid,nodev,rw")
+        ((bind? fs)
+         ; Флаг private по рекомендациям
+         ; https://blog.dhampir.no/content/duplicate-bind-mounts-with-chroots-on-systemd
+         "private")
+        (else ""))) 
+
+; Процедура слияния ключей в записи: пара (ключ значение) со встретившимся
+; повторно ключом заменяет предыдущую пару
+(define (merge-keys rec) (table->kv-list (table-append table-null rec))) 
+
+; Процедура проверки корректности путей. Если тип файловой системы tmpfs, то
+; абсолютным путём должна быть только цель монтирования в chroot-директории.
+; В остальных случае и источник и цель должны быть полными путями.
+(define (paths-absolute? fs src tgt)
+  (cond ((tmpfs? fs) (absolute-file-name? tgt))
+        (else (and (absolute-file-name? src)
+                   (absolute-file-name? tgt))))) 
+
+; Процедура преобразования μ-json записи в структуру, описывающую точку
+; монтирования. Нужна главным образом для того, чтобы корректно заполнить
+; неуказанные поля и выполнить проверки на ошибки. 
+(define (record->mount-record rec)
+  (let* ((mr (merge-keys rec))
+         (fs (micro-field mr "fs" "bind")) 
+         (t (micro-field mr "tgt" ""))
+         (s (micro-field mr "src" (default-source fs t)))
+         (o (micro-field mr "opt" (default-options fs))))
+    (if (or (string-null? t)
+            (string-null? s))
+        ; Если один из путей пустой, это ошибка. Возвращаем строку с сообщением
+        ; об этом.
+        (format #f "Parsing record: ~A. Source or target path is not specified"
+                (micro-record->string rec))
+        (if (not (paths-absolute? fs s t))
+            ; Если пути недостаточно абсолютны, это ошибка. Возвращаем строку с её
+            ; описанием
+            (format #f "Parsing record: ~A. Source or target path is not absolute"
+                    (micro-record->string rec))
+            ; Проверки пройдены, формируем структуру
+            (mount-record fs o (repath s) (repath t))))))
 
 ; Процедура разбора строки в μ-json формате в список записей о точках
 ; монтирования.
 ;
-; Основная проблема здесь -- обработка ошибок. Предлагается
-; следующая логика. Каждая строка содержит набор записей. Поэтому, каждая строка
-; должна превращаться в список структур mount-record. Если в результате работы
-; процедуры получается такой список, значит, ошибок не было. Если ошибки были, то
-; функция возвращает список строк, описывающих обнаруженные ошибки в двух
-; вариантах.
+; Основная проблема - обработка ошибок.
 ;
-;   1. Если micro-parse возвращает пустой список, значит, строку не получилось
+; Предлагается следующая логика. Каждая строка содержит набор записей. Поэтому,
+; каждая строка должна быть разобрана в список структур Mount-Record.
+;
+;   1. Если результатом работы процедуры стал список структур Mount-Record, значит,
+;   ошибок не было.
+;
+; Если ошибки были, то функция возвращает список строк, описывающих обнаруженные
+; ошибки в двух вариантах.
+;
+;   2. Если micro-parse возвращает пустой список, значит, строку не получилось
 ;   разобрать на элементы. В этом случае возвращается список с двумя строками:
 ;   разбираемая строка и сообщение об ошибке в формате.
 ;
-;   2. Если в полученной от micro-parse структуры нет необходимых полей, или эти
+;   3. Если в полученной от micro-parse структуры нет необходимых полей, или эти
 ;   поля не проходят проверку, то процедура record->mount-record возвращает
 ;   строку с описанием ошибки. Эта строка попадает в формируемый список структур
 ;   монтирования. Список затем фильтруется в поисках строк. Если строки
 ;   обнаружены, то были ошибки, к их списку приписывается вначало разбираемая
 ;   строка, и этот список возвращается.
 (define (string->mount-record-list str)
-  ; Процедура преобразования μ-json записи в структуру, описывающую точку
-  ; монтирования. Нужна главным образом для того, чтобы корректно заполнить
-  ; неуказанные поля и выполнить проверки на ошибки.
-  (define (record->mount-record rec)
-    ; Процедура выбора источника по-умолчанию. Сделана для того, чтобы облегчить
-    ; код в chroot-tool.sh, и не разбирать там различные варианты. Пока всё
-    ; просто: если речь о tmpfs, возвращаем none. Если о bind или bind-ro
-    ; возвращаем саму точку монтирования. В остальных случаях возвращаем пустую
-    ; строку и это должно вызывать ошибку.
-    (define (default-source fs t)
-      (cond ((string=? "tmpfs" fs) "none") 
-            ((or (string=? "bind" fs)
-                 (string=? "bind-ro" fs)) t)
-            (else ""))) 
-
-    ; Процедура выбора опций по умолчанию
-    (define (default-options fs)
-      (cond
-        ((string=? "tmpfs" fs) "noexec,nosuid,nodev,rw")
-
-        ((or (string=? "bind" fs)
-             (string=? "bind-ro" fs))
-         ; Флаг private по рекомендациям
-         ; https://blog.dhampir.no/content/duplicate-bind-mounts-with-chroots-on-systemd
-         "private")
-
-        (else "")))
-
-    ; Процедура слияния ключей в записи: пара (ключ значение) со встретившимся
-    ; повторно ключом заменяет предыдущую пару
-    (define (merge-keys rec) (table->kv-list (table-append table-null rec)))
-
-    ; Процедура проверки корректности путей. Если тип файловой системы tmpfs, то
-    ; абсолютным путём должна быть только цель монтирования в chroot-директории.
-    ; В остальных случае и источник и цель должны быть полными путями.
-    (define (paths-absolute? fs src tgt)
-      ; (format #t "DBG: fs:~A src:~A tgt:~A~%" fs src tgt)
-      (cond ((string=? "tmpfs") (absolute-file-name? tgt))
-            (else (and (absolute-file-name? src)
-                       (absolute-file-name? tgt)))))
-
-    ; Тело процедуры record->mount-record
-    (let* ((mr (merge-keys rec))
-           (fs (micro-field mr "fs" "bind")) 
-           (t (micro-field mr "tgt" ""))
-           (s (micro-field mr "src" (default-source fs t)))
-           (o (micro-field mr "opt" (default-options fs))))
-      (if (or (string-null? t)
-              (string-null? s))
-        ; Если один из путей пустой, это ошибка. Возвращаем строку с сообщением
-        ; об этом.
-        (format #f "Parsing record: ~A. Source or target path is not specified"
-                (micro-record->string rec))
-        (if (not (paths-absolute? fs s t))
-          ; Если пути недостаточно абсолютны, это ошибка. Возвращаем строку с её
-          ; описанием
-          (format #f "Parsing record: ~A. Source or target path is not absolute"
-                  (micro-record->string rec))
-          ; Проверки пройдены, формируем структуру
-          (mount-record fs o (repath s) (repath t)))) ))
-
-  ; Тело процедуры string->mount-record-list
   (let ((records (micro-parse #\: str)))
     (if (null? records)
       ; Если разбор не удался, возвращаем список строк, описывающих ошибку
@@ -191,16 +187,16 @@
           ; Иначе возвращаем список ошибок, озаглавленный (первый элемент) разбираемой строкой
           (cons str error-strings))))))
 
+;   (define (bindings? p) (or (string=? "BINDINGS" (key p))
+;                             (string-prefix? "BINDINGS_" (key p))))
+;   
+;   ; Порядок обработки переменных. Лексикографический порядок имён. BINDINGS,
+;   ; если присутствует, автоматически попадёт на первое место
+;   (define (order a b) (string<? (key a) (key b))) 
+
 ; Процедура загрузки строки с записями о точках монтирования из переменной
 ; BINDINGS и переменных вида BINDINGS_*
 (define (strings-from-vars path)
-  (define (bindings? p) (or (string=? "BINDINGS" (key p))
-                            (string-prefix? "BINDINGS_" (key p))))
-  
-  ; Порядок обработки переменных. Лексикографический порядок имён. BINDINGS,
-  ; если присутствует, автоматически попадёт на первое место
-  (define (order a b) (string<? (key a) (key b)))
-
   (if (not (file-ok? path 'regular mode-r))
     ; Если нет окружений, то и список строк пуст 
     '()
@@ -209,21 +205,16 @@
             ; ..., полученные обрезанием пробелов в значениях переменных, ...
             (map (compose string-trim-both val)
                  ; ..., являющихся bindings-переменными, загруженными из сценария
-                 ; по пути path
-                 (sort (filter bindings? (source-bash path)) order)))))
-
-; Прежнее тело strings-from-vars
-; (let ((p (assoc "BINDINGS" (source-bash path))))
-;       (if (not (pair? p))
-;         ; Если нет переменной BINDINGS, то и список строк пуст
-;         '()
-;         (let ((str (string-trim-both (val p))))
-;           (if (null? str)
-;             ; Если переменная содержит строку из пробелов, то и список строк
-;             ; пуст
-;             '()
-;             ; Если всё хорошо, то результат -- список из одной строки
-;             (list (val p))))))
+                 ; по пути path.
+                 ; 
+                 ; Сортировка в порядке order переставит переменные в
+                 ; лексикографический порядок для последующей обработки:
+                 ; BINDINGS попадёт на первое место.
+                 (let ((bindings? (lambda (p)
+                                    (or (string=? "BINDINGS" (key p))
+                                        (string-prefix? "BINDINGS_" (key p)))))
+                       (order (lambda (a b) (string<? (key a) (key b)))))
+                   (sort (filter bindings? (source-bash path)) order))))))
 
 ; Загрузка строк с записями о точках монтирования из файла с конфигурацией. 
 (define (strings-from-conf path)
@@ -234,15 +225,13 @@
     ; пустые строки будут отброшены процедурой source-ini
     (strings-by-key "bind" (source-ini path))))
 
-
-
 (define tgt car)
 (define mnt cdr)
 
-(define system-points '(; Флаг noexec не дает выполнять, а это нужно для apt-get
-                        ; при установке некоторых пакетов (например, openssl);
-                        ; поэтому переопределяем опции по-умолчанию для /tmp.
-                        "tgt:/tmp fs:tmpfs opt:nosuid,nodev,rw"
+; У /tmp нет флага noexec, потому что это препятствует нормально работе apt-get
+; при установке некоторых пакетов (например, openssl). Поэтому явно указаны
+; опции, вместо используемых по-умолчанию.
+(define system-points '("tgt:/tmp fs:tmpfs opt:nosuid,nodev,rw"
                         "tgt:/run fs:tmpfs"
                         "tgt:/proc"
                         "tgt:/sys"

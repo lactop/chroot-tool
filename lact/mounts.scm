@@ -16,8 +16,8 @@
                          dump-mnt
                          mount-record->kv-pair
                          findmnt-record-stream
-                         unhexify))
-
+                         unhexify
+                         bind? bind-ro? tmpfs?))
 
 ; Структура для описания точки монтирования
 (define-immutable-record-type Mount-Record
@@ -143,3 +143,10 @@
   (let ((p (open-pipe* OPEN_READ "findmnt" "-PAo" "TARGET,SOURCE,FSTYPE,OPTIONS,PROPAGATION")))
     (stream-filter (lambda (r) (string-prefix? chroot-dir (mount:target r)))
                    (stream-map findmnt-string->mount-record (port->string-stream p)))))
+
+; Небольшой общий словарик для коммуникции.
+
+; Предикаты для описывающих виды монтирования строк
+(define (bind-ro? s) (string=? "bind-ro" s))
+(define (bind? s) (or (string=? "bind" s) (string=? "bind-ro" s)))
+(define (tmpfs? s) (string=? "tmpfs" s))
