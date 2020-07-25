@@ -20,7 +20,7 @@
 
 
 ; Структура для описания точки монтирования
-(define-immutable-record-type mount-record-t
+(define-immutable-record-type Mount-Record
   ; Конструктор
   (mount-record type options source target)
   ; Процедура определения: является ли значение данной структурой
