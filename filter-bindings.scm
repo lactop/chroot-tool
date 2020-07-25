@@ -26,8 +26,9 @@
 ; Поток вывода результатов
 (define dump-port (fdes->outport (string->number (get-param (command-line) 1 "1"))))
 
-; Есть ли в строке символы
+; Есть ли в контейнере элементы
 (define string-inhabited? (compose not string-null?)) 
+(define inhabited? (compose not null?))
 
 ; Красивый вывод информации о точке монтирования
 (define (pretty-mount r) (format #f "~A -o ~A ~A → ~A"
@@ -98,7 +99,7 @@
 
 ; Чтение inode директорий и их сравнение
 (define (inode p) (false-if-exception (stat:ino (stat p))))
-(define (inode=? p q) (and (number? np) (number? nq) (= np nq)))
+(define (inode=? p q) (and (number? p) (number? q) (= p q)))
 
 ; Часто встречающиеся проверки
 (define (bind? s) (string=? "bind" s))
@@ -109,7 +110,7 @@
 ; список опцию "ro"
 (define (options-set? options expected mount-type)
   (every (lambda (o) (table-ref options o))
-         (option-list expected (bind-ro? mount-typ))))
+         (option-list expected (bind-ro? mount-type))))
 
 ; Подходит ли смонтированная точка монтирования m под ожидаемое целевое описание
 ; e. Процедура возвращает список проваленных проверок. Если список пустой, то
@@ -127,36 +128,34 @@
          ; Попытка сделать всё «по теории», монады в стиле Клейсли. Чтобы код
          ; был немного проще Два действия: mismatch и ok. mismatch добавит
          ; ошибки к списку ошибок, ok ничего не добавит
-         (mismatch (lambda (err) (lambda (error-list) (cons err error-list))))
+         (mismatch (lambda (fmt . args)
+                     (let ((err (apply format #f fmt args)))
+                       (lambda (error-list) (cons err error-list)))))
          (ok identity)
+
          (check-sources
-           (lambda (err)
-             (if (or (bind? et) (bind-ro? et))
-                 ; Если вид монтирования - связывание директорий, то всё
-                 ; смонтировано ожидаемо, когда inode ожидаемого источника и
-                 ; inode смонтированной цели совпадают 
-                 (let ((eno (inode (mount:source e)))
-                       (tno (inode (mount:target m))))
-                   (if (inode=? eno tno)
-                       err
-                       (cons (foramt #f "indoes mismatch: ~a ≠ ~a" eno tno)
-                             err)))
-                 ; Иначе, должны совпадать строки описывающие источники
-                 (let ((es (mount:source e))
-                       (ms (mount:source m)))
-                   (if (string=? es ms) 
-                     err
-                     (cons (format #f "sources mismatch: ~a ≠ ~a" es ms)
-                           err))))))
+           (if (or (bind? et) (bind-ro? et))
+               ; Если вид монтирования - связывание директорий, то всё
+               ; смонтировано ожидаемо, когда inode ожидаемого источника и
+               ; inode смонтированной цели совпадают 
+               (let ((eno (inode (mount:source e)))
+                     (tno (inode (mount:target m))))
+                 (if (inode=? eno tno)
+                     ok
+                     (mismatch "sources mismatch: ~a ≠ ~a" eno tno)))
+               ; Иначе, должны совпадать строки описывающие источники
+               (let ((es (mount:source e))
+                     (ms (mount:source m)))
+                 (if (string=? es ms) 
+                     ok
+                     (mismatch "sources mismatch: ~a ≠ ~a" es ms)))))
 
          (check-options
-           (lambda (err)
-             (if (options-set? mo eo et)
-                 err
-                 (cons (format #f "options mismatch: ¬(~a ⊆ ~a)" 
-                               (if (bind-ro? et) (string-append "ro," eo) eo)
-                               (option-table->string mo))
-                       err)))))
+           (if (options-set? mo eo et)
+               ok
+               (mismatch "options mismatch: ¬(~a ⊆ ~a)"
+                         (if (bind-ro? et) (string-append "ro," eo) eo)
+                         (option-table->string mo)))))
     ((compose check-sources check-options) '())))
 
 ; (define (mount-point-proper? m e)
@@ -216,7 +215,16 @@
             ; Иначе, отмечаем её для ремонтирования
             (cons #:mounted (cons (string-join mismatches "; ") expected))))))) 
 
-; Вспомогательные проце
+; Удобства. Вспомогательные процедуры для доступа к полям, возвращаемой mark структуры
+(define mark:mark car)
+(define mark:reason cadr)
+(define mark:record cddr)
+
+; Удобства. Проверка отметок
+(define (mark-check m) (lambda (p) (eq? m (mark:mark p))))
+(define clean? (mark-check #:clean))
+; (define mounted? (mark-check #:mounted))
+(define expected? (mark-check #:expected))
 
 ; Процедура, которая добавляет маркер R к типу тех записей монтирования, которые
 ; следует перемонтировать. Маркер нужен, потому что процесс ремонтирования в
@@ -227,23 +235,41 @@
       (set-mount:type r (string-append/shared "R " (mount:type r)))))
 
 (define (process)
-  (let* ((mounts (read-mount-table))
+  (let* ((pretty-record (compose pretty-mount mark:record))
+         (mounts (read-mount-table))
          (bindings (stream-map (lambda (r) (mark mounts r))
-                               (mount-order-stream (current-input-port)))))
+                               (mount-order-stream (current-input-port))))
+         )
     ; Делим список всех точек на те, которые смонтированы нужным образом, и те,
-    ; что будут записаны в план
-    (receive (expected plan) (partition (lambda (p) (eq? #:expected (key p)))
-                                        (stream->list bindings))
-      (when (not (null? expected))
-        ; Развлекаем пользователя информацией об уже смонтированных точках
+    ; что будут записаны в план монтирования
+    (receive (expected plan) (partition expected? (stream->list bindings))
+
+      ; Развлекаем пользователя информацией об уже смонтированных точках 
+      (when (inhabited? expected) 
         (dump-error "mounted as expected:~%")
-        (for-each (lambda (p) (dump-error "~/~A~%" (pretty-mount (val p))))
+        (for-each (lambda (p) (dump-error "~/~A~%" (pretty-record p)))
                   expected))
 
-      ; Выводим план монтирования
+      ; Производственная необходимость информирования о причинах
+      ; (ре)монтирования
+      (when (not (null? plan))
+        (dump-error "~%(re)mounting plan:~%")
+        ; Группировка для удобства
+        (receive (clean mounted) (partition clean? plan)
+          (let ((dump-item (lambda (p)
+                             (dump-error "~/~a (reason: ~a)~%"
+                                         (pretty-record p) (mark:reason p)))))
+            (when (inhabited? clean)
+              (for-each dump-item clean)
+              (dump-error "~%"))
+            
+            (for-each dump-item mounted))))
+
+      ; Выводим план монтирования для chroot-tool.sh
       (with-output-to-port dump-port
-        (lambda () (for-each (lambda (p)
-                               ((dump-mnt "") (retype (key p) (val p))))
-                             plan))))))
+        (lambda ()
+          (for-each (lambda (p)
+                      ((dump-mnt "") (retype (mark:mark p) (mark:record p))))
+                    plan))))))
 
 (catch #t process (compose exit (lact-error-handler "filter-bindings")))
