@@ -12,7 +12,8 @@
                #:export (mount-record mount-record?
                          set-mount:type mount:type
                          mount:options set-mount:options
-                         mount:source mount:target
+                         mount:source
+                         mount:target set-mount:target
                          dump-mnt
                          mount-record->kv-pair
                          findmnt-record-stream
@@ -29,7 +30,7 @@
   (type mount:type set-mount:type)
   (options mount:options set-mount:options)
   (source mount:source)
-  (target mount:target)) 
+  (target mount:target set-mount:target)) 
 
 ; Процедура формирует процедуру генерации строкового представления точки
 ; монтирования в текущий порт вывода. Если chroot-dir не пустая строка, то эта
@@ -142,7 +143,7 @@
 
   (let ((p (open-pipe* OPEN_READ "findmnt" "-PAo" "TARGET,SOURCE,FSTYPE,OPTIONS,PROPAGATION")))
     (stream-filter (lambda (r) (string-prefix? chroot-dir (mount:target r)))
-                   (stream-map findmnt-string->mount-record (port->string-stream p)))))
+                   (stream-map findmnt-string->mount-record (pipe->string-stream p)))))
 
 ; Небольшой общий словарик для коммуникции.
 

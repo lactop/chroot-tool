@@ -95,20 +95,6 @@
       (run-child p)
       (run-parent p pid))))
 
-; (define (source-bash file)
-;   (define (read-vars)
-;     (stream->list (stream-map (lambda (s) (split-var-string #\= s))
-;                               (port->string-stream (open-input-pipe (cmd-line file))))))
-; 
-;   ; (catch 'system-error read-loop (lact-error-handler "source-bash")) 
-;   ;
-;   ; FIXME? Есть мнение великих (Р. Пайк, например), что прокидывать исключения
-;   ; через границы модулей - плохая идея. Но, видимо, в духе Scheme (и, видимо, в
-;   ; духе RiDE и в духе UNIX) отдавать решение о формировании доменов ошибок
-;   ; пользователю (в UNIX для этого используются процессы, а в процессах на
-;   ; каждый чих exit(-1)). Это упрощает код. Пока придерживаюсь этой философии
-;   (read-vars)) 
-
 (define (source-bash file)
   (stream->list (stream-map (lambda (s) (split-var-string #\= s)) (env-stream file))))
 

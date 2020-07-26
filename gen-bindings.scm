@@ -187,12 +187,7 @@
           ; Иначе возвращаем список ошибок, озаглавленный (первый элемент) разбираемой строкой
           (cons str error-strings))))))
 
-;   (define (bindings? p) (or (string=? "BINDINGS" (key p))
-;                             (string-prefix? "BINDINGS_" (key p))))
-;   
-;   ; Порядок обработки переменных. Лексикографический порядок имён. BINDINGS,
-;   ; если присутствует, автоматически попадёт на первое место
-;   (define (order a b) (string<? (key a) (key b))) 
+; ФОРМИРОВАНИЕ СПИСКА МОНТИРОВАНИЯ ПО РАЗЛИЧНЫМ ФАЙЛАМ КОНФИГУРАЦИИ
 
 ; Процедура загрузки строки с записями о точках монтирования из переменной
 ; BINDINGS и переменных вида BINDINGS_*
@@ -241,9 +236,46 @@
                         "tgt:/lib/init/rw"
                         "tgt:/run/systemd/journal"))
 
-; Формирование списка точек монтирования из разнообразных конфигурационных
-; файлов
+; КАНОНИЗАЦИЯ ПУТЕЙ ДО ЦЕЛЕЙ МОНТИРОВАНИЯ
+
+; Несколько основных тезисов.
+;
+; 1. Канонизировать необходимо только пути для целей. Потому что именно по ним
+; проверяется факт смонтированности некоторой точки: findmnt показывает
+; физические (канонические) пути.
+;
+; 2. Канонизация осуществляется вызовом утилиты readlink. Хорошо бы использовать
+; более разумную realpath, но не на всех узлах Lact она есть.
+;
+; 3. readlink запускается с ключом -m, что означает, не обращать внимания на
+; отсутствующие компоненты пути. Это оправданная логика, потому что код не
+; заглядывает дальше, чем указанный путь до цели. Если компонент целевого пути нет в
+; файловой системе, то безопасно их создать, потому что они никак не будут
+; перемешиваться с исходными путями.
+;
+; 4. readlink при наличии ошибок вернёт меньше записей. Можно было бы сделать
+; запуск readlink на каждую запись отдельно, и так определять, какие корректны,
+; какие нет. Это не сложно. Но пока в chroot-tool нет нормального прослеживания
+; ошибок (и не понятно, как в рамках bash его сделать), поэтому ошибка будет
+; рапортоваться, как единое целое (gen-bindings вернёт не 0), поэтому все пути
+; можно обработать одной пачкой и сообщить об одной ошибке.
+
+(define (canonicalize-targets base points)
+  ; (dump-error "HERE~%")
+  (let* ((requested (map (lambda (p) (join-path base (mount:target p))) points))
+         (given (stream->list
+                  (pipe->string-stream
+                    (apply open-pipe* OPEN_READ "readlink" "-m" requested)))))
+    (if (= (length requested) (length given))
+        (map set-mount:target points given)
+        (throw 'readlink-failed requested given)))) 
+
+; (define (canonicalize-targets base points) points)
+
+; СБОР ВСЕГО ВМЕСТЕ В ПРОЦЕДУРУ ГЕНЕРАЦИИ СПИСКА МОНТИРОВАНИЯ
+
 (define (up-execute)
+  ; (dump-error "up-execute HERE~%")
   ; Составляем список всех добытых из конфигурации строк, каждую из которых
   ; преобразуем в список записей о точках монтирования. Выделяем из этого списка
   ; списков потенциальные сообщения об ошибках (списки строк).
@@ -252,12 +284,14 @@
                           (strings-from-vars params-path)))
          (records (map string->mount-record-list strings))
          (errors (filter (compose string? first) records)))
+    ; (dump-error "READ records. Errors: ~a~%" errors)
     (if (not (null? errors))
       ; Если обнаружены ошибки, выбрасываем их в стандартный lact-обработчик
       (throw 'parse-error errors)
       ; Если не обнаружены, загружаем все записи в таблицу по ключам, которые
       ; соответствуют целям монтирования, затем распечатываем эту таблицу
-      (let* ((keyed-records (map mount-record->kv-pair (concatenate records)))
+      (let* ((canonical (canonicalize-targets chroot-dir (concatenate records)))
+             (keyed-records (map mount-record->kv-pair canonical))
              (t-all (table-append table-null keyed-records))
              ; Порядок монтирования должен определяться целями, чтобы
              ; смонтировать /p/q, сначала нужно смонтировать /p, если нужно
@@ -269,15 +303,20 @@
             ; передаём её на вход в функцию (dump-mnt chroot-dir), которая
             ; выводит эти записи в текущий порт вывода, который перенастроен
             ; функцией with-output-to-port
-            (for-each (compose (dump-mnt chroot-dir) mnt) b-all)))))))
+            (for-each (compose (dump-mnt "") mnt) b-all)))))))
+
+; ГЕНЕРАЦИЯ СПИСКА ДЕМОНТИРОВАНИЯ
 
 (define (down-execute)
+  ; (dump-error "down-execute HERE~%")
   (let ((S (findmnt-record-stream chroot-dir)))
     (with-output-to-port dump-port
       (lambda ()
         (for-each (lambda (m) (format #t "~A~%" m))
                   (sort-list (stream->list (stream-map mount:target S))
                              string>?))))))
+
+; (dump-error "WE ARE HERE~%")
 
 (catch
   #t
