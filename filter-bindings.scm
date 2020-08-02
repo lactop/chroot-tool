@@ -25,6 +25,10 @@
              (lact error-handling)
              (lact kit))
 
+; ВЫВОДИТЬ ЛИ МНОГО ИНФОРМАЦИИ
+
+(define verbose-plans #f)
+
 ; ПРОСТЫЕ ВСПОМОГАТЕЛЬНЫЕ ПРОЦЕДУРЫ
 
 ; Поток вывода результатов
@@ -241,22 +245,24 @@
       (when (inhabited? expected) 
         (dump-error "mounted as expected:~%")
         (for-each (lambda (p) (dump-error "~/~A~%" (pretty-record p)))
-                  expected))
+                  expected)
+        (dump-error "~%"))
 
-      (let ((dump-item (lambda (p)
-                         (dump-error "~/~a (reason: ~a)~%"
-                                     (pretty-record p) (mark:reason p)))))
-        (when (inhabited? clean)
-          (dump-error "~%mounting plan:~%")
-          (for-each dump-item clean))
-        
-        (when (inhabited? remount)
-          (dump-error "~%re-mounting plan:~%")
-          (for-each dump-item remount))
-        
-        (when (inhabited? reflag)
-          (dump-error "~%re-propagation plan:~%")
-          (for-each dump-item reflag)))
+      (when verbose-plans
+        (let ((dump-item (lambda (p)
+                           (dump-error "~/~a (reason: ~a)~%"
+                                       (pretty-record p) (mark:reason p)))))
+          (when (inhabited? clean)
+            (dump-error "~%mounting plan:~%")
+            (for-each dump-item clean))
+
+          (when (inhabited? remount)
+            (dump-error "~%re-mounting plan:~%")
+            (for-each dump-item remount))
+
+          (when (inhabited? reflag)
+            (dump-error "~%re-propagation plan:~%")
+            (for-each dump-item reflag))))
 
       ; Выводим план монтирования для chroot-tool.sh
       (with-output-to-port dump-port

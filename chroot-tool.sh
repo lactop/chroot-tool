@@ -310,17 +310,6 @@ pack_parse () {
     fi
   fi
 
-#   # Формирование программы с назначением переменных для передачи в eval
-#   echo "local SRC_DIR='$src_dir'"
-#   echo "local DST_ARCHIVE='$dst_archive'"
-#   echo "local CFG_DIR='$cfg_dir'"
-# 
-#   # Собираем список игнорируемых файлов и директорий в один массив (это тоже
-#   # будет передано в eval).
-#   echo "local IGNORE=($(collect_exclude "$src_dir" "$cfg_dir/tool.conf" "${ignore[@]}"))"
-# 
-#   echo 'readonly SRC_DIR DST_ARCHIVE CFG_DIR IGNORE'
-
   SRC_DIR='$src_dir'
   DST_ARCHIVE='$dst_archive'
   CFG_DIR='$cfg_dir'
@@ -389,13 +378,6 @@ pack_execute () {
 # Пример использования: pack -d some/chroot/dir -f archive.tar.xz -i a b c d
 
 function pack () {
-#   # Разбор параметров командной строки и сбор списка исключений. Явно
-#   # проверяется код возврата из этой стадии, чтобы аккуратно прервать исполнение
-#   local vars="$(pack_parse "$@")"
-#   readonly vars
-#   test $? -eq 0 || exit $?
-#   eval "${vars}"
-
   local SRC_DIR DST_ARCHIVE CFG_DIR IGNORE
   pack_parse "$@"
 
@@ -506,11 +488,6 @@ unpack_parse () {
     exit -1
   fi
 
-#   # Формирование программы назначения переменных для eval
-#   echo "local DST_DIR='$dst_dir'"
-#   echo "local SRC_ARCHIVE='$src_archive'"
-#   echo 'readonly DST_DIR SRC_ARCHIVE'
-
   DST_DIR="$dst_dir"
   SRC_ARCHIVE="$src_archive"
   readonly DST_DIR SRC_ARCHIVE
@@ -565,12 +542,6 @@ function unpack_execute () {
 # Пример использования: unpack -f archive.tar.xz -d new/chroot/dir
 
 unpack () {
-#   # Аккуратный разбор командной строки и аккуратное прерывание в случае ошибки.
-#   local vars="$(unpack_parse "$@")"
-#   readonly vars
-#   test $? -eq 0 || exit $?
-#   eval "$vars"
-
   local SRC_ARCHIVE DST_DIR
   unpack_parse "$@"
 
@@ -713,15 +684,21 @@ EOF
     remount_flag='M'
     fs_type="$a"
   else
-    # Иначе, некий флаг и описание типа монтирования. FIXME: флаг не проверяется
-    remount_flag='R'
+    # Иначе, некий флаг и описание типа монтирования. 
     fs_type="$b"
+    case "$a" in
+      'R' | 'P') remount_flag="$a" ;;
+
+      *) echo 'FIXME: unknown mount modifier: ' "$a" '; treating as R'
+         remount_flag='R'
+         ;;
+    esac
   fi
   readonly remount_flag fs_type
 
   # Возвращаем результат через переменные
   case "$fs_type" in
-    "bind" | "bind-ro") FS_FLAG='-B' ;;
+    'bind' | 'bind-ro') FS_FLAG='-B' ;;
     *) FS_FLAG="-t$fs_type"
   esac
 
@@ -761,6 +738,52 @@ mount_dir_check () {
   fi
 }
 
+# Обёртка вокруг процедуры монтирования, учитывающая, что опции могут быть
+# пустыми
+do_mount () {
+  local fs_flag="$1"
+  local opt="$2"
+  local rp="$3"
+  local tp="$4"
+  readonly fs_flag opt rp tp
+
+  if test -z "$opt"
+  then
+    mount "$fs_flag" "$rp" "$tp"
+  else
+    mount "$fs_flag" -o "$opt" "$rp" "$tp"
+  fi
+}
+
+# Установка флагов продвижения
+do_propagation () {
+  local tp="$1"
+  local opt="$2"
+  readonly tp opt
+
+  local -a OPT
+  IFS=',' read -a OPT <<< "$opt"
+  readonly OPT
+
+  if test ${#OPT[@]} -le 0
+  then
+    # Если так получилось, что никаких флагов нет, можно просто возвращаться,
+    # ничего не делая
+    true
+  else
+    # Иначе, к флагам надо добавить приставку --make, и всё это приписать к
+    # mount
+    local -a FLAGS
+    for f in ${OPT[@]}
+    do
+      FLAGS[${#FLAGS[@]}]="--make-$f"
+    done
+    readonly FLAGS
+
+    mount ${FLAGS[@]} "$tp"
+  fi
+}
+
 # Универсальная процедура монтирования
 mount_generic () {
   local fs="$1"
@@ -772,13 +795,32 @@ mount_generic () {
   local FS_TYPE FS_FLAG REMOUNT_FLAG
   mount_parse_type $fs
 
-  if test "$REMOUNT_FLAG" = 'R'
+  local RF
+  RF="$REMOUNT_FLAG"
+  readonly RF
+
+#   if test "$REMOUNT_FLAG" = 'R'
+#   then
+#     echo -ne "\n\tre-binding "
+#   else
+#     echo -ne "\n\tbinding "
+#   fi
+
+  case "$REMOUNT_FLAG" in
+    'R') echo -ne "\n\tre-binding " ;;
+    'M') echo -ne "\n\tbinding " ;;
+    'P') echo -ne "\n\tre-propagating " ;;
+    *) echo "Unknown binding mode. Giving up" >&2
+       return
+       ;;
+  esac
+
+  if test -z "$opt"
   then
-    echo -ne "\n\tre-binding "
+    echo "$FS_FLAG $rp → $tp:"
   else
-    echo -ne "\n\tbinding "
+    echo "$FS_FLAG -o $opt $rp → $tp:"
   fi
-  echo "$FS_FLAG -o $opt $rp → $tp:"
 
   # Если запланировано ремонтирование, осуществляем его. При неудаче прерываем
   # процесс
@@ -790,52 +832,81 @@ mount_generic () {
     fi
   fi
 
-  # Если к этой точке монтирования уже что-то подключено, делать нечего,
-  # возвращаемся
-  if findmnt -Alo TARGET | grep "$tp" >/dev/null
+  # Если к этой точке монтирования уже что-то подключено, а у нас режим M или R,
+  # то делать нечего, возвращаемся. Если режим P, то точка должна существовать,
+  # иначе делать нечего, и тоже возвращаемся. Идущий выше case оставляет только
+  # три варианта значений для RF
+  if test "$RF" = 'P'
   then
-    echo -e "\t\tMOUNTED; skipping"
-    return 
+    if ! { findmnt -Alo TARGET | grep "$tp" >/dev/null; }
+    then
+      echo -e "\t\tNOT MOUNTED; skipping"
+      return
+    fi
+  else
+    if findmnt -Alo TARGET | grep "$tp" >/dev/null
+    then
+      echo -e "\t\tMOUNTED; skipping"
+      return 
+    fi
   fi
 
   # Проверяем и создаём по необходимости исходную директорию и точку
   # монтирования в chroot. Точка монтирования в chroot проверяется и создаётся
   # во всех случаях. Точка в хост-системе создаётся только при связывании
-  # директорий: fs ∈ {bind, bind-ro}
+  # директорий: fs ∈ {bind, bind-ro}. Требуется только в том случае, если
+  # RF != P.
 
-  case "$FS_TYPE" in
-    "bind" | "bind-ro")
-      if ! mount_dir_check 'source' "$rp"
+  if test "$RF" != 'P'
+  then
+    case "$FS_TYPE" in
+      "bind" | "bind-ro")
+        if ! mount_dir_check 'source' "$rp"
+        then
+          return
+        fi
+        ;;
+
+      *) true ;;
+    esac
+
+    if ! mount_dir_check 'chroot target' "$tp"
+    then
+      return
+    fi
+  fi
+
+  if test "$RF" != 'P'
+  then
+    # Связывание исходной директории с точкой монтирования в chroot. Если не
+    # получается, пропускаем. Флаг private из руководства
+    # https://blog.dhampir.no/content/duplicate-bind-mounts-with-chroots-on-systemd
+    echo -ne "\t\tbinding $rp → $tp: "
+    if do_mount "$FS_FLAG" "$opt" "$rp" "$tp"
+    then
+      echo OK
+    else
+      echo FAILED
+      return
+    fi
+
+    # Если запланировано связывание в режиме ro ремонтируем точку
+    if test "$FS_TYPE" = 'bind-ro'
+    then
+      echo -ne "\t\tsetting ro flag $tp: "
+      if mount -o remount,ro "$tp"
       then
+        echo OK
+      else
+        echo FAILED
         return
       fi
-      ;;
-
-    *) true ;;
-  esac
-
-  if ! mount_dir_check 'chroot target' "$tp"
-  then
-    return
+    fi
   fi
 
-  # Связывание исходной директории с точкой монтирования в chroot. Если
-  # не получается, пропускаем. Флаг private из руководства
-  # https://blog.dhampir.no/content/duplicate-bind-mounts-with-chroots-on-systemd
-  echo -ne "\t\tbinding $rp → $tp: "
-  if mount "$FS_FLAG" -o "$opt" "$rp" "$tp"
+  if test "$RF" = 'P'
   then
-    echo OK
-  else
-    echo FAILED
-    return
-  fi
-
-  # Наконец, если запланировано связывание в режиме ro ремонтируем точку
-  if test "$FS_TYPE" = 'bind-ro'
-  then
-    echo -ne "\t\tsetting ro flag $tp: "
-    if mount -o remount,ro "$tp"
+    if do_propagation "$tp" "$opt"
     then
       echo OK
     else
@@ -897,7 +968,12 @@ echo_mount () {
   local FS_TYPE REMOUNT_FLAG FS_FLAG
   mount_parse_type $fs
 
-  echo -e "\t$FS_TYPE($REMOUNT_FLAG) $FS_FLAG -o $opt $rp → $tp"
+  if test -z "$opt"
+  then
+    echo -e "\t$FS_TYPE($REMOUNT_FLAG) $FS_FLAG $rp → $tp"
+  else
+    echo -e "\t$FS_TYPE($REMOUNT_FLAG) $FS_FLAG -o $opt $rp → $tp"
+  fi
 }
 
 # Процедура - точка входа для команды on. Стандартная точка входа по меркам
