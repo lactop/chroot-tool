@@ -11,10 +11,12 @@
 ; Пример запуска программы: filter-bindings.scm
 
 (setlocale LC_ALL "")
-(add-to-load-path (let ((fn (current-filename))) (if (string? fn) (dirname fn) ".")))
+(add-to-load-path
+  (let ((fn (current-filename))) (if (string? fn) (dirname fn) ".")))
 
 (use-modules (ice-9 receive)
              (srfi srfi-1)
+             (srfi srfi-11)
              (srfi srfi-41)
              (srfi srfi-9 gnu)
              (lact utils)
@@ -113,24 +115,27 @@
 
 ; Подходит ли смонтированная точка монтирования m под ожидаемое целевое описание
 ; e. Процедура возвращает список проваленных проверок. Если список пустой, то
-; всё в порядке.
-
-; FIXME: Небольшая неувязка в этой функции: mount:options для m - таблица для
-; более эффективного сравнения, а mount:options для e - строка. Жаба давит
-; делать Mount-Record более сложной. ЗАМЕТКА: вообще, конечно, концепция maps в
-; Clojure более гибкая.
+; всё в порядке. Информация о проваленой проверке - это пара: (маркер .
+; сообщение об ошибке). Маркер говорит о том, что делать с этой точкой
+; монтирования: #:remount означает, что нужно перемонтировать; #:reflag
+; означает, что нужно изменить флаги продвижения.
 
 (define (mount-point-mismatches m e)
   (let* ((et (mount:type e))
          (mo (mount:options m))
          (eo (mount:options e))
+         (mp (mount:propagations m))
+         (ep (mount:propagations e))
          ; Попытка сделать всё «по теории», монады в стиле Клейсли. Чтобы код
          ; был немного проще Два действия: mismatch и ok. mismatch добавит
-         ; ошибки к списку ошибок, ok ничего не добавит
-         (mismatch (lambda (fmt . args)
+         ; описание ошибки к текущему описанию, а маркер к текущему набору
+         ; маркеров; ok ничего не добавит
+         (mismatch (lambda (marker fmt . args)
                      (let ((err (apply format #f fmt args)))
-                       (lambda (error-list) (cons err error-list)))))
-         (ok identity)
+                       (lambda (markers reasons)
+                         (values (kit-cons marker markers)
+                                 (string-append reasons ";" err))))))
+         (ok values)
 
          (check-sources
            (if (bind? et) 
@@ -141,57 +146,66 @@
                      (tno (inode (mount:target m))))
                  (if (inode=? eno tno)
                      ok
-                     (mismatch "sources mismatch: ~a ≠ ~a" eno tno)))
+                     (mismatch #:remount "sources mismatch: ~a ≠ ~a" eno tno)))
                ; Иначе, должны совпадать строки описывающие источники
                (let ((es (mount:source e))
                      (ms (mount:source m)))
                  (if (string=? es ms) 
                      ok
-                     (mismatch "sources mismatch: ~a ≠ ~a" es ms)))))
+                     (mismatch #:remount "sources mismatch: ~a ≠ ~a" es ms)))))
 
          (check-options
            (if (options-set? mo eo)
                ok
-               (mismatch "options mismatch: ¬(~a ⊆ ~a)"
+               (mismatch #:remount
+                         "options mismatch: ¬(~a ⊆ ~a)"
                          (options->string eo)
-                         (option->string mo)))))
-    ((compose check-sources check-options) '())))
+                         (options->string mo))))
+         
+         (check-flags
+           (if (options-set? mp ep)
+               ok
+               (mismatch #:reflag
+                         "propagations mismatch: ¬(~a ⊆ ~a)"
+                         (option->string eo)
+                         (options->string ep)))))
+    ((compose check-sources check-options check-flags) kit-empty "")))
 
 ; Процедура разметки точек монтирования. Каждая точка превращается в дерево
-; (отметка . (причина . точка)), где отметка -- одно из следующих значений:
+; (отметки . (причины . точка)), где отметка -- одно из следующих значений:
 ;
-;   #:clear -- точка не смонтирована; 
-;   #:mounted -- точка смонтирована, необходимо ремонтирование;
-;   #:expected -- точка смонтирована так, как ожидается.
+;   #:clear    - точка не смонтирована, требуется монтирование;
+;   #:remount  - точка смонтирована, требуется ремонтирование;
+;   #:reflag   - точка смонтирована, требуется изменение флагов продвижения;
+;   #:expected - всё смонтировано так, как нужно.
 ;
-; Причина - строка, описывающая причину отметки.
+; Причины - строка, описывающая причины установки отметок
 (define (mark t-mounts expected)
   (let ((m (table-ref t-mounts (mount:target expected))))
     (if (not (mount-record? m))
       ; Если ожидаемая точка монтирования не найдена среди смонтированных,
       ; отмечаем её для последующего монтирования
-      (cons #:clear (cons "not mounted" expected))
-      ; Иначе, проверяем, есть ли несовпадения в параметров монтирования точки с
+      (cons (kit #:clean) (cons "not mounted" expected))
+      ; Иначе, проверяем, есть ли несовпадения в параметрах монтирования точки с
       ; ожидаемыми
-      (let ((mismatches (mount-point-mismatches m expected)))
-        ; (dump-error "expected options: ~A~%" (mount:options expected))
-        ; (dump-error "mounted options: ~S~%" (table->kv-list (mount:options m)))
-        (if (null? mismatches)
+      (receive (mismatches reasons) (mount-point-mismatches m expected)
+        (if (kit-empty? mismatches)
             ; Если несовпадений нет, то всё, как нужно
-            (cons #:expected (cons "mounted as expected" expected))
-            ; Иначе, отмечаем её для ремонтирования
-            (cons #:mounted (cons (string-join mismatches "; ") expected))))))) 
+            (cons (kit #:expected) (cons "mounted as expected" expected))
+            ; Иначе, возвращаем несоответствия
+            (cons mismatches (cons reasons expected))))))) 
 
 ; Удобства. Вспомогательные процедуры для доступа к полям, возвращаемой mark структуры
-(define mark:mark car)
+(define mark:marks car)
 (define mark:reason cadr)
 (define mark:record cddr)
 
 ; Удобства. Проверка отметок
-(define (mark-check m) (lambda (p) (eq? m (mark:mark p))))
+(define (mark-check m) (lambda (p) (kit-item? m (mark:marks p))))
 (define clean? (mark-check #:clean))
-; (define mounted? (mark-check #:mounted))
 (define expected? (mark-check #:expected))
+(define remount? (mark-check #:remount))
+(define reflag? (mark-check #:reflag))
 
 ; Процедура, которая добавляет маркер R к типу тех записей монтирования, которые
 ; следует перемонтировать. Маркер нужен, потому что процесс ремонтирования в
