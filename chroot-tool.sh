@@ -906,6 +906,7 @@ mount_generic () {
 
   if test "$RF" = 'P'
   then
+    echo -ne "\t\t re-propagating $tp: "
     if do_propagation "$tp" "$opt"
     then
       echo OK
