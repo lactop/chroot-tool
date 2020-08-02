@@ -2,6 +2,7 @@
                #:use-module (ice-9 popen)
                #:use-module (ice-9 iconv)
                #:use-module (ice-9 regex)
+               #:use-module (ice-9 receive)
                #:use-module (srfi srfi-1)
                #:use-module (srfi srfi-9 gnu) 
                #:use-module (srfi srfi-41)
@@ -9,26 +10,29 @@
                #:use-module (lact utils)
                #:use-module (lact fs)
                #:use-module (lact error-handling)
-               #:export (mount-record mount-record?
+               #:export (mount-record make-mount-record mount-record?
                          set-mount:type mount:type
                          mount:options set-mount:options
+                         mount:propagations set-mount:propagations
                          mount:source
                          mount:target set-mount:target
-                         dump-mnt
+                         dump-mnt DUMP-OPTIONS DUMP-PROPAGATIONS DUMP-BOTH
                          mount-record->kv-pair
                          findmnt-record-stream
                          unhexify
-                         bind? bind-ro? tmpfs? propagation?))
+                         bind? bind-ro? tmpfs? propagation?
+                         option-list))
 
 ; Структура для описания точки монтирования
 (define-immutable-record-type Mount-Record
   ; Конструктор
-  (mount-record type options source target)
+  (mount-record type options propagations source target)
   ; Процедура определения: является ли значение данной структурой
   mount-record?
   ; Набор функций для доступа к полям записи
   (type mount:type set-mount:type)
   (options mount:options set-mount:options)
+  (propagations mount:propagations set-mount:propagations)
   (source mount:source)
   (target mount:target set-mount:target)) 
 
@@ -36,16 +40,31 @@
 ; монтирования в текущий порт вывода. Если chroot-dir не пустая строка, то эта
 ; строка приписывается к пути точки монтирования в chroot-окружении
 ; (используется в gen-bindings). В противном случае путь до цели берётся таким,
-; какой есть (используется в filter-bindings)
-(define (dump-mnt chroot-dir)
+; какой есть (используется в filter-bindings). DUMP-Флаги управляют тем, как
+; будут отформатированы опции (требуется для filter-bindings).
+
+(define DUMP-OPTIONS 1)
+(define DUMP-PROPAGATIONS 2)
+(define DUMP-BOTH (logior DUMP-OPTIONS DUMP-PROPAGATIONS))
+
+(define (dump-mnt chroot-dir flags)
   (let ((chroot-repath
-          (if (null? chroot-dir)
+          (if (string-null? chroot-dir)
             identity
-            (lambda (path) (join-path chroot-dir (string-trim path file-name-separator?))))))
+            (lambda (path) (join-path chroot-dir (string-trim path file-name-separator?)))))
+        
+        (gather-options
+          (compose
+            (if (logtest DUMP-OPTIONS flags)
+                (lambda (o r) (append o (mount:options r)))
+                (lambda (o r) o))
+            (if (logtest DUMP-PROPAGATIONS flags)
+                (lambda (r) (values (mount:propagations r) r))
+                (lambda (r) (values '() r))))))
     (lambda (r)
       (format #t "~A~%~A~%~A~%~A~%"
               (mount:type r)
-              (mount:options r)
+              (string-join (gather-options r) ",")
               (mount:source r)
               (chroot-repath (mount:target r))))))
 
@@ -123,27 +142,37 @@
     (recode (extract (fold-matches re-code str '(() . 0) collect))))
   (chop-string str))
 
+; Процедура объединения опций монтирования и флагов распространения (что бы
+; это ни значило) в один список, разделённый запятыми
+(define (join-options r)
+  (let* ((o (micro-field r "OPTIONS" ""))
+         (p (micro-field r "PROPAGATION" ""))
+         (pl (if (string-null? p) '() (cons p '())))
+         (ol (if (string-null? o) pl (cons o pl))))
+    (string-join ol ","))) 
+
+; Преобразование строки, выдаваемой вызовом findmnt, в запись о точке
+; монтирования. Опции монтирования и флаги продвижения сохраняются в отдельных
+; списках.
+(define (findmnt-string->mount-record s)
+  (let ((rec (first (micro-parse #\= s))))
+    (mount-record (micro-field rec "FSTYPE" "")
+                  (string-split-ne (micro-field rec "OPTIONS" "") #\,)
+                  (string-split-ne (micro-field rec "PROPAGATION" "") #\,) 
+;                  (join-options rec)
+                  (unhexify (micro-field rec "SOURCE" ""))
+                  (unhexify (micro-field rec "TARGET" "")))))
+
 (define (findmnt-record-stream chroot-dir)
-  (define (findmnt-string->mount-record s)
-    ; Процедура объединения опций монтирования и флагов распространения (что бы
-    ; это ни значило) в один список, разделённый запятыми
-    (define (join-options r)
-      (let* ((o (micro-field r "OPTIONS" ""))
-             (p (micro-field r "PROPAGATION" ""))
-             (pl (if (string-null? p) '() (cons p '())))
-             (ol (if (string-null? o) pl (cons o pl))))
-        (string-join ol ",")))
-
-    (let ((rec (first (micro-parse #\= s))))
-      ; (dump-error "~S~%~S~%" s rec)
-      (mount-record (micro-field rec "FSTYPE" "")
-                    (join-options rec)
-                    (unhexify (micro-field rec "SOURCE" ""))
-                    (unhexify (micro-field rec "TARGET" "")))))
-
   (let ((p (open-pipe* OPEN_READ "findmnt" "-PAo" "TARGET,SOURCE,FSTYPE,OPTIONS,PROPAGATION")))
     (stream-filter (lambda (r) (string-prefix? chroot-dir (mount:target r)))
                    (stream-map findmnt-string->mount-record (pipe->string-stream p)))))
+
+; Процедура разделения опций на список. Добавляе ro, если указан
+; соответствующий флаг
+(define (option-list str ro?)
+  (let ((l (string-split-ne str #\,)))
+    (if ro? (cons "ro" l) l)))
 
 ; Небольшой общий словарик для коммуникции.
 
@@ -157,3 +186,9 @@
 (define (propagation? o)
   (not (boolean? (member o '("shared" "slave" "private" "unbindable")))))
  
+; Формирование структуры с описанием точки монтирования из сырых данных.
+; Предполагается, что options заданы строкой
+(define (make-mount-record type options source target)
+  (let ((opts (option-list options (bind-ro? type))))
+    (receive (p o) (partition propagation? opts)
+      (mount-record type o p source target))))

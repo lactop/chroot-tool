@@ -16,6 +16,7 @@
 (use-modules (ice-9 receive)
              (srfi srfi-1)
              (srfi srfi-41)
+             (srfi srfi-9 gnu)
              (lact utils)
              (lact table)
              (lact mounts)
@@ -25,54 +26,44 @@
 ; ПРОСТЫЕ ВСПОМОГАТЕЛЬНЫЕ ПРОЦЕДУРЫ
 
 ; Поток вывода результатов
-(define dump-port (fdes->outport (string->number (get-param (command-line) 1 "1"))))
-
-; Есть ли в контейнере элементы
-(define string-inhabited? (compose not string-null?)) 
-(define inhabited? (compose not null?))
+(define dump-port
+  (fdes->outport (string->number (get-param (command-line) 1 "1"))))
 
 ; Красивый вывод информации о точке монтирования
-(define (pretty-mount r) (format #f "~A -o ~A ~A → ~A"
-                                 (mount:type r)
-                                 (mount:options r) 
-                                 (mount:source r)
-                                 (mount:target r)))
+(define (pretty-mount r)
+  (format #f "~A -o ~A ~A → ~A"
+          (mount:type r)
+          (string-join (append (mount:options r) (mount:propagations r)) ",")
+          (mount:source r)
+          (mount:target r)))
 
 ; Проверка значения на логическую истинность
 (define (true? v) (and (boolean? v) v))
 
 ; ЗАГРУЗКА ТАБЛИЦЫ СМОНТИРОВАННЫХ ТОЧЕК МОНТИРОВАНИЯ
 
-; Процедура разделения опций на список. Добавляе ro, если указан
-; соответствующий флаг
-(define (option-list str ro?)
-  (let ((l (filter string-inhabited? (string-split str #\,))))
-    (if ro? (cons "ro" l) l)))   
-
-; ; Преобразование строки с опциями в таблицу. Ссылка на таблицу записывается в
-; ; поле options сформированной структуры
-; (define (tabulate-options r)
-;   ; l -- список опций,
-;   ; m -- список, в котором каждая опция отмечает #t.
-;   (let* ((l (option-list (mount:options r) #f))
-;          (m (map (lambda (o) (cons o #t)) l)))
-;     (set-mount:options r (table-append table-null m))))  
-
 ; Преобразование опций в структуре точки монтрования в таблицу. Создаётся новая
 ; структура с таблицей (это просто набор: опция → Bool) в поле options
+; (define (tabulate-options r)
+;   (set-mount:options r (list->kit (mount:options r))))
+
 (define (tabulate-options r)
-  (set-mount:options r (list->kit (option-list (mount:options r) #f))))
+  (set-fields r
+    ((mount:options) (list->kit (mount:options r)))
+    ((mount:propagations) (list->kit (mount:propagations r)))))
 
-; Обратное преобразование таблицы опций в строку
-(define (option-table->string t) (string-join (kit->list t) ","))
-
-; (define (option-table->string t)
-;   (string-join (map car (table->kv-list t)) ","))
+; Обратное преобразование опций в строку
+(define (options->string t)
+  (cond ((list? t) (string-join t ","))
+        ((kit? t) (string-join (kit->list t)))
+        (else (error "Wrong options format:" t))))
 
 (define (read-mount-table)
   (kv-list->table
-    (stream->list (stream-map (compose mount-record->kv-pair tabulate-options)
-                              (findmnt-record-stream "")))))
+    (stream->list
+      (stream-map
+        (compose mount-record->kv-pair tabulate-options)
+        (findmnt-record-stream "")))))
 
 ; ЧТЕНИЕ СПИСКА ЗАДАНИЙ ДЛЯ МОНТИРОВАНИЯ
 
@@ -95,7 +86,7 @@
 
                         ; Действительно прочитано 4 следующих элемента
                         ((= 4 (length vals))
-                         (stream-cons (apply mount-record vals)
+                         (stream-cons (apply make-mount-record vals)
                                       (chunk (stream-drop 4 s))))
 
                         ; Нечто не так с форматом входных данных
@@ -113,8 +104,12 @@
 ; Все ли ожидаемые опции expected включены в таблицу опций options? Опции заданы
 ; строками со словами, разделёнными запятыми. Тип монтирования добавляет в
 ; список опцию "ro"
-(define (options-set? options expected mount-type)
-  (kit-contains? options (option-list expected (bind-ro? mount-type))))
+; (define (options-set? options expected mount-type)
+;   (kit-contains? options (option-list expected (bind-ro? mount-type))))
+
+; (define (options-set? options expected) (kit-contains? options expected))
+
+(define options-set? kit-contains?)
 
 ; Подходит ли смонтированная точка монтирования m под ожидаемое целевое описание
 ; e. Процедура возвращает список проваленных проверок. Если список пустой, то
@@ -155,11 +150,11 @@
                      (mismatch "sources mismatch: ~a ≠ ~a" es ms)))))
 
          (check-options
-           (if (options-set? mo eo et)
+           (if (options-set? mo eo)
                ok
                (mismatch "options mismatch: ¬(~a ⊆ ~a)"
-                         (if (bind-ro? et) (string-append "ro," eo) eo)
-                         (option-table->string mo)))))
+                         (options->string eo)
+                         (option->string mo)))))
     ((compose check-sources check-options) '())))
 
 ; Процедура разметки точек монтирования. Каждая точка превращается в дерево
@@ -239,8 +234,26 @@
       ; Выводим план монтирования для chroot-tool.sh
       (with-output-to-port dump-port
         (lambda ()
-          (for-each (lambda (p)
-                      ((dump-mnt "") (retype (mark:mark p) (mark:record p))))
-                    plan))))))
+          (let ((dmp (dump-mnt "" DUMP-OPTIONS)))
+            (for-each (lambda (p) (dmp (retype (mark:mark p) (mark:record p))))
+                      plan)))))))
 
-(catch #t process (compose exit (lact-error-handler "filter-bindings")))
+; (catch #t process (compose exit (lact-error-handler "filter-bindings")))
+
+; FIXME: наверняка, существует более адекватный способ точного перехвата этих
+; ошибок. «Лесенка» нужна, чтобы система адекватно указывала места тех
+; исключений, которые явно не обрабатываются.
+
+(let ((handler (compose exit (lact-error-handler "filter-bindings"))))
+  (catch 'system-error
+         (lambda ()
+           (catch 'bad-var-string
+                  (lambda ()
+                    (catch 'parse-error
+                           (lambda ()
+                             (catch 'readlink-failed
+                                    process
+                                    handler))
+                           handler))
+                  handler))
+         handler))

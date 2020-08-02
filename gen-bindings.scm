@@ -146,7 +146,7 @@
             (format #f "Parsing record: ~A. Source or target path is not absolute"
                     (micro-record->string rec))
             ; Проверки пройдены, формируем структуру
-            (mount-record fs o (repath s) (repath t))))))
+            (make-mount-record fs o (repath s) (repath t))))))
 
 ; Процедура разбора строки в μ-json формате в список записей о точках
 ; монтирования.
@@ -303,7 +303,7 @@
             ; передаём её на вход в функцию (dump-mnt chroot-dir), которая
             ; выводит эти записи в текущий порт вывода, который перенастроен
             ; функцией with-output-to-port
-            (for-each (compose (dump-mnt "") mnt) b-all)))))))
+            (for-each (compose (dump-mnt "" DUMP-BOTH) mnt) b-all)))))))
 
 ; ГЕНЕРАЦИЯ СПИСКА ДЕМОНТИРОВАНИЯ
 
@@ -318,10 +318,25 @@
 
 ; (dump-error "WE ARE HERE~%")
 
-(catch
-  #t
-  (if (string=? "up" action) up-execute down-execute)
-  ; Стандартный обработчик lact-error-handler вернёт значение #f, которое будет
-  ; передано процедуре exit, что приведёт к прекращению процесса с кодом ошибки
-  ; 1
-  (compose exit (lact-error-handler "gen-bindings")))
+; (catch
+;   #t
+;   (if (string=? "up" action) up-execute down-execute)
+;   ; Стандартный обработчик lact-error-handler вернёт значение #f, которое будет
+;   ; передано процедуре exit, что приведёт к прекращению процесса с кодом ошибки
+;   ; 1
+;   (compose exit (lact-error-handler "gen-bindings")))
+
+(let ((handler (compose exit (lact-error-handler "gen-bindings")))
+      (process (if (string=? "up" action) up-execute down-execute)))
+  (catch 'system-error
+         (lambda ()
+           (catch 'bad-var-string
+                  (lambda ()
+                    (catch 'parse-error
+                           (lambda ()
+                             (catch 'readlink-failed
+                                    process
+                                    handler))
+                           handler))
+                  handler))
+         handler))

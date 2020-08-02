@@ -8,11 +8,18 @@
                #:use-module (ice-9 popen)
                #:export (head tail
                          port->string-stream pipe->string-stream
-                         get-param))
+                         get-param
+                         inhabited?
+                         string-inhabited?
+                         string-split-ne))
 
 ; Различные доступы к элементам структур, состоящих из пар (списки)
 (define head car)
 (define tail cdr)
+
+; Есть ли в контейнере элементы
+(define string-inhabited? (compose not string-null?)) 
+(define inhabited? (compose not null?)) 
 
 ; Поток чтения строк из порта
 (define-stream (port->string-stream p)
@@ -38,3 +45,7 @@
   (catch 'out-of-range
          (lambda () (list-ref cl n))
          (lambda err default))) 
+
+; Разбиение строки на элементы с выбором непустных элементов (non empty)
+(define string-split-ne (compose (lambda (l) (filter string-inhabited? l))
+                                 string-split)) 
