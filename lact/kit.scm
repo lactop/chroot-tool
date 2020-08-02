@@ -4,7 +4,7 @@
 (define-module (lact kit)
                #:use-module (ice-9 vlist)
                #:use-module (srfi srfi-1)
-               #:export (kit-empty kit-empty? kit-cons kit 
+               #:export (kit-empty kit-empty? kit-cons kit kit?
                          kit-insert kit-append
                          kit->list list->kit
                          kit-item? kit-contains? kit-items? kits<=?
@@ -18,7 +18,8 @@
 
 (define (kit-cons item K) (if (kit-item? item K) K (vhash-cons item #t K)))
 
-(define (kit-append K . lists) (fold (lambda (l k) (fold kit-cons k l)) K lists))
+(define (kit-append K . lists)
+  (fold (lambda (l k) (fold kit-cons k l)) K lists))
 
 (define (kit-instert K . items) (kit-append K items))
 
@@ -27,6 +28,8 @@
 (define (kit->list K) (vlist->list (vlist-map car K)))
 
 (define (kit . items) (list->kit items))
+
+(define (kit? k) (or (vlist-null? k) (vhash? k)))
 
 (define (kit-contains? K items) (every (lambda (i) (kit-item? i K)) items))
 

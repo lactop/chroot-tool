@@ -103,14 +103,7 @@
 
 ; Часто встречающиеся проверки
 
-; Все ли ожидаемые опции expected включены в таблицу опций options? Опции заданы
-; строками со словами, разделёнными запятыми. Тип монтирования добавляет в
-; список опцию "ro"
-; (define (options-set? options expected mount-type)
-;   (kit-contains? options (option-list expected (bind-ro? mount-type))))
-
-; (define (options-set? options expected) (kit-contains? options expected))
-
+; Все ли ожидаемые опции expected включены в таблицу опций options? 
 (define options-set? kit-contains?)
 
 ; Подходит ли смонтированная точка монтирования m под ожидаемое целевое описание
@@ -134,7 +127,11 @@
                      (let ((err (apply format #f fmt args)))
                        (lambda (markers reasons)
                          (values (kit-cons marker markers)
-                                 (string-append reasons ";" err))))))
+                                 (if (string-null? reasons)
+                                     err
+                                     (string-append/shared reasons
+                                                           "; "
+                                                           err)))))))
          (ok values)
 
          (check-sources
@@ -167,8 +164,8 @@
                ok
                (mismatch #:reflag
                          "propagations mismatch: ¬(~a ⊆ ~a)"
-                         (option->string eo)
-                         (options->string ep)))))
+                         (options->string ep)
+                         (options->string mp)))))
     ((compose check-sources check-options check-flags) kit-empty "")))
 
 ; Процедура разметки точек монтирования. Каждая точка превращается в дерево
@@ -210,19 +207,35 @@
 ; Процедура, которая добавляет маркер R к типу тех записей монтирования, которые
 ; следует перемонтировать. Маркер нужен, потому что процесс ремонтирования в
 ; chroot-tool.sh отличается от процесса монтирования.
-(define (retype f r)
-  (if (eq? #:clear f)
-      r
-      (set-mount:type r (string-append/shared "R " (mount:type r)))))
+; (define (retype f r)
+;   (if (eq? #:clear f)
+;       r
+;       (set-mount:type r (string-append/shared "R " (mount:type r)))))
+
+(define (retype m r)
+  (set-mount:type r (string-append/shared m " " (mount:type r))))
 
 (define (process)
   (let* ((pretty-record (compose pretty-mount mark:record))
          (mounts (read-mount-table))
          (bindings (stream-map (lambda (r) (mark mounts r))
                                (mount-order-stream (current-input-port)))))
-    ; Делим список всех точек на те, которые смонтированы нужным образом, и те,
-    ; что будут записаны в план монтирования
-    (receive (expected plan) (partition expected? (stream->list bindings))
+    ; Делим список всех точек на те, которые смонтированы нужным образом
+    ; (expected), и те, что будут записаны в план монтирования. Далее
+    ; этот делится на те точки, которые нужно просто смонтировать (clean) и те,
+    ; которые смонтированы (mounted). Последние делятся на те, которые следует
+    ; ремонтировать (remount), и те, у которых следует исправить флаги
+    ; продвижения (rest). Особенность в том, что для точек clean и remount
+    ; нужно так же установить заново флаги продвижения, поэтому список reflag
+    ; состоит из списков clean, remount и rest
+    (let*-values (((expected plan) (partition expected?
+                                              (stream->list bindings)))
+                  ((clean R) (partition clean? plan))
+                  ((remount rest) (partition remount? R))
+                  ((reflag) (values (filter (compose inhabited?
+                                                     mount:propagations
+                                                     mark:record)
+                                            (append clean remount rest)))))
 
       ; Развлекаем пользователя информацией об уже смонтированных точках 
       (when (inhabited? expected) 
@@ -230,27 +243,34 @@
         (for-each (lambda (p) (dump-error "~/~A~%" (pretty-record p)))
                   expected))
 
-      ; Производственная необходимость информирования о причинах
-      ; (ре)монтирования
-      (when (inhabited? plan) 
-        (dump-error "~%(re)mounting plan:~%")
-        ; Группировка для удобства
-        (receive (clean mounted) (partition clean? plan)
-          (let ((dump-item (lambda (p)
-                             (dump-error "~/~a (reason: ~a)~%"
-                                         (pretty-record p) (mark:reason p)))))
-            (when (inhabited? clean)
-              (for-each dump-item clean)
-              (dump-error "~%"))
-            
-            (for-each dump-item mounted))))
+      (let ((dump-item (lambda (p)
+                         (dump-error "~/~a (reason: ~a)~%"
+                                     (pretty-record p) (mark:reason p)))))
+        (when (inhabited? clean)
+          (dump-error "~%mounting plan:~%")
+          (for-each dump-item clean))
+        
+        (when (inhabited? remount)
+          (dump-error "~%re-mounting plan:~%")
+          (for-each dump-item remount))
+        
+        (when (inhabited? reflag)
+          (dump-error "~%re-propagation plan:~%")
+          (for-each dump-item reflag)))
 
       ; Выводим план монтирования для chroot-tool.sh
       (with-output-to-port dump-port
         (lambda ()
-          (let ((dmp (dump-mnt "" DUMP-OPTIONS)))
-            (for-each (lambda (p) (dmp (retype (mark:mark p) (mark:record p))))
-                      plan)))))))
+          (let ((dmpo (dump-mnt "" DUMP-OPTIONS))
+                (dmpf (dump-mnt "" DUMP-PROPAGATIONS)))
+            (for-each (lambda (p) (dmpo (mark:record p)))
+                      clean)
+
+            (for-each (lambda (p) (dmpo (retype "R" (mark:record p))))
+                      remount)
+
+            (for-each (lambda (p) (dmpf (retype "P" (mark:record p))))
+                      reflag)))))))
 
 ; (catch #t process (compose exit (lact-error-handler "filter-bindings")))
 
