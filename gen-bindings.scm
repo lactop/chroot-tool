@@ -122,8 +122,9 @@
 ; В остальных случае и источник и цель должны быть полными путями.
 (define (paths-absolute? fs src tgt)
   (cond ((tmpfs? fs) (absolute-file-name? tgt))
-        (else (and (absolute-file-name? src)
-                   (absolute-file-name? tgt))))) 
+        ((bind? fs) (and (absolute-file-name? src)
+                         (absolute-file-name? tgt)))
+        (else (absolute-file-name? tgt)))) 
 
 ; Процедура преобразования μ-json записи в структуру, описывающую точку
 ; монтирования. Нужна главным образом для того, чтобы корректно заполнить
@@ -230,7 +231,7 @@
                         "tgt:/run fs:tmpfs"
                         "tgt:/proc"
                         "tgt:/sys"
-                        "tgt:/dev"
+                        "tgt:/dev src:dev fs:devtmpfs opt:private"
                         "tgt:/dev/shm"
                         "tgt:/dev/pts"
                         "tgt:/lib/init/rw"
