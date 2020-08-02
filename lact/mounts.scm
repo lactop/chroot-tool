@@ -18,7 +18,7 @@
                          mount-record->kv-pair
                          findmnt-record-stream
                          unhexify
-                         bind? bind-ro? tmpfs?))
+                         bind? bind-ro? tmpfs? propagation?))
 
 ; Структура для описания точки монтирования
 (define-immutable-record-type Mount-Record
@@ -151,3 +151,9 @@
 (define (bind-ro? s) (string=? "bind-ro" s))
 (define (bind? s) (or (string=? "bind" s) (string=? "bind-ro" s)))
 (define (tmpfs? s) (string=? "tmpfs" s))
+
+; Является ли опция опцией продвижения?
+
+(define (propagation? o)
+  (not (boolean? (member o '("shared" "slave" "private" "unbindable")))))
+ 

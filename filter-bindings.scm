@@ -19,7 +19,8 @@
              (lact utils)
              (lact table)
              (lact mounts)
-             (lact error-handling))
+             (lact error-handling)
+             (lact kit))
 
 ; ПРОСТЫЕ ВСПОМОГАТЕЛЬНЫЕ ПРОЦЕДУРЫ
 
@@ -48,19 +49,25 @@
   (let ((l (filter string-inhabited? (string-split str #\,))))
     (if ro? (cons "ro" l) l)))   
 
-; Преобразование строки с опциями в таблицу. Ссылка на таблицу записывается в
-; поле options сформированной структуры
+; ; Преобразование строки с опциями в таблицу. Ссылка на таблицу записывается в
+; ; поле options сформированной структуры
+; (define (tabulate-options r)
+;   ; l -- список опций,
+;   ; m -- список, в котором каждая опция отмечает #t.
+;   (let* ((l (option-list (mount:options r) #f))
+;          (m (map (lambda (o) (cons o #t)) l)))
+;     (set-mount:options r (table-append table-null m))))  
+
+; Преобразование опций в структуре точки монтрования в таблицу. Создаётся новая
+; структура с таблицей (это просто набор: опция → Bool) в поле options
 (define (tabulate-options r)
-  ; l -- список опций,
-  ; m -- список, в котором каждая опция отмечает #t.
-  (let* ((l (option-list (mount:options r) #f))
-         (m (map (lambda (o) (cons o #t)) l)))
-    (set-mount:options r (table-append table-null m))))  
+  (set-mount:options r (list->kit (option-list (mount:options r) #f))))
 
 ; Обратное преобразование таблицы опций в строку
+(define (option-table->string t) (string-join (kit->list t) ","))
 
-(define (option-table->string t)
-  (string-join (map car (table->kv-list t)) ","))
+; (define (option-table->string t)
+;   (string-join (map car (table->kv-list t)) ","))
 
 (define (read-mount-table)
   (kv-list->table
@@ -103,13 +110,11 @@
 
 ; Часто встречающиеся проверки
 
-
 ; Все ли ожидаемые опции expected включены в таблицу опций options? Опции заданы
 ; строками со словами, разделёнными запятыми. Тип монтирования добавляет в
 ; список опцию "ro"
 (define (options-set? options expected mount-type)
-  (every (lambda (o) (table-ref options o))
-         (option-list expected (bind-ro? mount-type))))
+  (kit-contains? options (option-list expected (bind-ro? mount-type))))
 
 ; Подходит ли смонтированная точка монтирования m под ожидаемое целевое описание
 ; e. Процедура возвращает список проваленных проверок. Если список пустой, то
@@ -156,38 +161,6 @@
                          (if (bind-ro? et) (string-append "ro," eo) eo)
                          (option-table->string mo)))))
     ((compose check-sources check-options) '())))
-
-; (define (mount-point-proper? m e)
-;   (let ((et (mount:type e)))
-;     ; Если тип монтирования - связывание директорий, то всё смонтировано
-;     ; ожидаемо, если inode исходной директории совпадает с уже смонтированной. 
-;     (if (or (string "bind" et) (string "bind-ro" et))
-;         (if (ino=? (mount:source e) (mount:target m))
-;             
-;             )
-;         (string=? (mount:source e) (mount:source m))
-; 
-;       
-;       ((or (string? "bind" et)
-;            (string? "bind-ro" et))
-;        (or (ino=? (mount:source e) (mount:target m)) "Inodes mismatch"))
-;       
-;       )
-;     )
-;   (and
-;     (let ((mt (mount:type e)))
-;       (cond
-;         ; Если тип монтирования -- связывание директорий, то монтирование
-;         ; кооректное, если inode исходной ожидаемой директории совпадает
-;         ; с целевой (пути (mount:target e) (mount:target m) и без того
-;         ; совпадают)
-;         ((or (string=? "bind" mt)
-;              (string=? "bind-ro" mt)) (ino=? (mount:source e) (mount:target m)))
-; 
-;         ; В противном случае должны совпадать ожидаемые источники, как
-;         ; строки
-;         (else (string=? (mount:source e) (mount:source m)))))
-;     (options-set? (mount:options m) (mount:options e) (mount:type e))))
 
 ; Процедура разметки точек монтирования. Каждая точка превращается в дерево
 ; (отметка . (причина . точка)), где отметка -- одно из следующих значений:
@@ -237,8 +210,7 @@
   (let* ((pretty-record (compose pretty-mount mark:record))
          (mounts (read-mount-table))
          (bindings (stream-map (lambda (r) (mark mounts r))
-                               (mount-order-stream (current-input-port))))
-         )
+                               (mount-order-stream (current-input-port)))))
     ; Делим список всех точек на те, которые смонтированы нужным образом, и те,
     ; что будут записаны в план монтирования
     (receive (expected plan) (partition expected? (stream->list bindings))
@@ -251,7 +223,7 @@
 
       ; Производственная необходимость информирования о причинах
       ; (ре)монтирования
-      (when (not (null? plan))
+      (when (inhabited? plan) 
         (dump-error "~%(re)mounting plan:~%")
         ; Группировка для удобства
         (receive (clean mounted) (partition clean? plan)
