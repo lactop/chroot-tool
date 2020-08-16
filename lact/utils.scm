@@ -11,6 +11,7 @@
                          get-param
                          inhabited?
                          string-inhabited?
+                         singleton?
                          string-split-ne))
 
 ; Различные доступы к элементам структур, состоящих из пар (списки)
@@ -20,6 +21,9 @@
 ; Есть ли в контейнере элементы
 (define string-inhabited? (compose not string-null?)) 
 (define inhabited? (compose not null?)) 
+
+; Список состоит из одного элемента?
+(define (singleton? l) (and (pair? l) (null? (tail l))))  
 
 ; Поток чтения строк из порта
 (define-stream (port->string-stream p)

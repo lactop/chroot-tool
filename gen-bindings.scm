@@ -74,7 +74,7 @@
 ; Разбор параметров командной строки
 (define cmd-line (command-line))
 (define action (get-param cmd-line 1 "undefined"))
-(define chroot-dir (rebuild-path (get-param cmd-line 2 ".")))
+(define chroot-dir (normalize-path (get-param cmd-line 2 ".")))
 (define dump-port (fdes->outport (string->number (get-param cmd-line 3 "1"))))
 
 ; Верное ли действие затребовано?
@@ -245,31 +245,35 @@
 ; проверяется факт смонтированности некоторой точки: findmnt показывает
 ; физические (канонические) пути.
 ;
-; 2. Канонизация осуществляется вызовом утилиты readlink. Хорошо бы использовать
-; более разумную realpath, но не на всех узлах Lact она есть.
-;
-; 3. readlink запускается с ключом -m, что означает, не обращать внимания на
-; отсутствующие компоненты пути. Это оправданная логика, потому что код не
-; заглядывает дальше, чем указанный путь до цели. Если компонент целевого пути нет в
-; файловой системе, то безопасно их создать, потому что они никак не будут
-; перемешиваться с исходными путями.
-;
-; 4. readlink при наличии ошибок вернёт меньше записей. Можно было бы сделать
-; запуск readlink на каждую запись отдельно, и так определять, какие корректны,
-; какие нет. Это не сложно. Но пока в chroot-tool нет нормального прослеживания
-; ошибок (и не понятно, как в рамках bash его сделать), поэтому ошибка будет
-; рапортоваться, как единое целое (gen-bindings вернёт не 0), поэтому все пути
-; можно обработать одной пачкой и сообщить об одной ошибке.
+; ; 2. Канонизация осуществляется вызовом утилиты readlink. Хорошо бы использовать
+; ; более разумную realpath, но не на всех узлах Lact она есть.
+; ;
+; ; 3. readlink запускается с ключом -m, что означает, не обращать внимания на
+; ; отсутствующие компоненты пути. Это оправданная логика, потому что код не
+; ; заглядывает дальше, чем указанный путь до цели. Если компонент целевого пути нет в
+; ; файловой системе, то безопасно их создать, потому что они никак не будут
+; ; перемешиваться с исходными путями.
+; ;
+; ; 4. readlink при наличии ошибок вернёт меньше записей. Можно было бы сделать
+; ; запуск readlink на каждую запись отдельно, и так определять, какие корректны,
+; ; какие нет. Это не сложно. Но пока в chroot-tool нет нормального прослеживания
+; ; ошибок (и не понятно, как в рамках bash его сделать), поэтому ошибка будет
+; ; рапортоваться, как единое целое (gen-bindings вернёт не 0), поэтому все пути
+; ; можно обработать одной пачкой и сообщить об одной ошибке.
+; 
+; (define (canonicalize-targets base points)
+;   (let* ((requested (map (lambda (p) (repath base (mount:target p))) points))
+;          (given (stream->list
+;                   (pipe->string-stream
+;                     (apply open-pipe* OPEN_READ "readlink" "-m" requested)))))
+;     (if (= (length requested) (length given))
+;         (map set-mount:target points given)
+;         (throw 'readlink-failed requested given)))) 
 
 (define (canonicalize-targets base points)
-  ; (dump-error "HERE~%")
-  (let* ((requested (map (lambda (p) (join-path base (mount:target p))) points))
-         (given (stream->list
-                  (pipe->string-stream
-                    (apply open-pipe* OPEN_READ "readlink" "-m" requested)))))
-    (if (= (length requested) (length given))
-        (map set-mount:target points given)
-        (throw 'readlink-failed requested given)))) 
+  (map (lambda (p) (let ((path (normalize-path (repath base (mount:target p)))))
+                     (set-mount:target p path)))
+       points))
 
 ; (define (canonicalize-targets base points) points)
 
