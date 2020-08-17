@@ -150,18 +150,18 @@
                      (cons (join-path (first p) (second p)) (tail-of-tail p))))))
     (unfold-right null? identity next path)))
 
-(define (try-path! p)
-  (catch
-    'system-error
-    (lambda ()
-      ; Вызов chdir может не сработать по множеству разных причин. Считаем
-      ; любую невозможность пройти дальше индикатором того, что следует
-      ; попробовать путь покороче. Чему внешнему циклу сообщит возврат #f из
-      ; lact-error-handler.
-      (chdir (head p))
-      ; Получилось сменить директорию, возвращаем полный путь:
-      (apply join-path (getcwd) (tail p)))
-    (lact-error-handler "try-path!"))) 
+; (define (try-path! p)
+;   (catch
+;     'system-error
+;     (lambda ()
+;       ; Вызов chdir может не сработать по множеству разных причин. Считаем
+;       ; любую невозможность пройти дальше индикатором того, что следует
+;       ; попробовать путь покороче. Чему внешнему циклу сообщит возврат #f из
+;       ; lact-error-handler.
+;       (chdir (head p))
+;       ; Получилось сменить директорию, возвращаем полный путь:
+;       (apply join-path (getcwd) (tail p)))
+;     (lact-error-handler "try-path!"))) 
 
 (define (read-path! path)
   ; В любом случае стараемся восстановить текущую директорию
@@ -180,7 +180,7 @@
                      (chdir (head p))
                      ; Получилось сменить директорию, возвращаем полный путь:
                      (apply join-path (getcwd) (tail p)))
-                   (lact-error-handler "try-path!")))))
+                   (lact-error-handler (string-append "try-path!" (head p)))))))
     (if (null? path)
       wd
       (catch
