@@ -227,12 +227,21 @@
 ; У /tmp нет флага noexec, потому что это препятствует нормально работе apt-get
 ; при установке некоторых пакетов (например, openssl). Поэтому явно указаны
 ; опции, вместо используемых по-умолчанию.
-(define system-points '("tgt:/tmp fs:tmpfs opt:nosuid,nodev,rw"
+(define system-points `("tgt:/tmp fs:tmpfs opt:nosuid,nodev,rw"
                         "tgt:/run fs:tmpfs"
                         "tgt:/proc"
                         "tgt:/sys"
                         "tgt:/dev src:dev fs:devtmpfs opt:private"
-                        "tgt:/dev/shm"
+
+                        ; Правка внесена под особенности файловой системы
+                        ; Debian 7. /dev/shm является в нём символической
+                        ; ссылкой на /run/shm. Поэтому /dev/shm просто
+                        ; разрешается в физический путь, который потом
+                        ; клонируется в chroot-окружение. FIXME.1: Это не
+                        ; должно считаться нормальным поведением. FIXME.2:
+                        ; вычисляется на этапе загрузки/компиляции.
+                        ,(string-append "tgt:" (normalize-path "/dev/shm"))
+
                         "tgt:/dev/pts"
                         "tgt:/lib/init/rw"
                         "tgt:/run/systemd/journal"))
