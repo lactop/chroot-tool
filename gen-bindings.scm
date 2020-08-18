@@ -290,7 +290,6 @@
   (lambda (p) (string-prefix? dir (mount:target p))))
 
 (define (up-execute)
-  ; (dump-error "up-execute HERE~%")
   ; Составляем список всех добытых из конфигурации строк, каждую из которых
   ; преобразуем в список записей о точках монтирования. Выделяем из этого списка
   ; списков потенциальные сообщения об ошибках (списки строк).
@@ -304,21 +303,21 @@
       (throw 'parse-error errors)
       ; Если всё хорошо, то нужно собрать все записи с учётом их целей,
       ; выбросить игнорируемые точки монтирования, разрешить пути в физические,
-      ; и проверить на то, что все физические пути ведут в chroot-окружение
+      ; проверить на то, что все физические пути ведут в chroot-окружение.
       (let* ((canonical
                (canonicalize-targets chroot-dir
                                      (drop-ignored (gather-targets records))))
              (misses (filter (compose not (target-at-chroot? chroot-dir)) canonical)))
         (if (inhabited? misses) 
           ; Если обнаружились целевые пути, которые не ведут в
-          ; chroot-директорию, сообщаем об этом. Некоторая обработка нужна,
-          ; чтобы удовлетворить интерфейсу обработчика 'parse-error
+          ; chroot-директорию, выбрасываем об этом ошибку. Некоторая обработка нужна,
+          ; чтобы соответствовать интерфейсу обработчика 'parse-error
           (throw 'parse-error
                  (map (lambda (p)
                         (list (mount:target p) "Not at the chroot scope"))
                       misses))
-          ; Если всё распечатываем список монтирования в необходимом порядке:
-          ; чтобы смонтировать /p/q, сначала нужно смонтировать /p, если нужно 
+          ; Если всё хорошо, распечатываем список монтирования в необходимом порядке:
+          ; чтобы смонтировать /p/q, сначала нужно смонтировать /p.
           (let ((order (lambda (a b) (string<? (mount:target a) (mount:target b)))))
             (with-output-to-port dump-port
                                  (lambda ()
@@ -330,7 +329,7 @@
                                    (for-each (dump-mnt "" DUMP-BOTH)
                                              (sort canonical order))))))))))
 
-; ГЕНЕРАЦИЯ СПИСКА ДЕМОНТИРОВАНИЯ
+; ГЕНЕРАЦИЯ СПИСКА РАЗМОНТИРОВАНИЯ 
 
 (define (down-execute)
   ; (dump-error "down-execute HERE~%")
@@ -340,16 +339,6 @@
         (for-each (lambda (m) (format #t "~A~%" m))
                   (sort-list (stream->list (stream-map mount:target S))
                              string>?))))))
-
-; (dump-error "WE ARE HERE~%")
-
-; (catch
-;   #t
-;   (if (string=? "up" action) up-execute down-execute)
-;   ; Стандартный обработчик lact-error-handler вернёт значение #f, которое будет
-;   ; передано процедуре exit, что приведёт к прекращению процесса с кодом ошибки
-;   ; 1
-;   (compose exit (lact-error-handler "gen-bindings")))
 
 (let ((handler (compose exit (lact-error-handler "gen-bindings")))
       (process (if (string=? "up" action) up-execute down-execute)))
