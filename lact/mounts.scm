@@ -16,17 +16,19 @@
                          mount:propagations set-mount:propagations
                          mount:source
                          mount:target set-mount:target
+                         mount:ignore?
                          dump-mnt DUMP-OPTIONS DUMP-PROPAGATIONS DUMP-BOTH
                          mount-record->kv-pair
                          findmnt-record-stream
                          unhexify
                          bind? bind-ro? tmpfs? propagation?
-                         option-list))
+                         option-list
+                         pretty-mount))
 
 ; Структура для описания точки монтирования
 (define-immutable-record-type Mount-Record
   ; Конструктор
-  (mount-record type options propagations source target)
+  (mount-record type options propagations source target ignore?)
   ; Процедура определения: является ли значение данной структурой
   mount-record?
   ; Набор функций для доступа к полям записи
@@ -34,7 +36,8 @@
   (options mount:options set-mount:options)
   (propagations mount:propagations set-mount:propagations)
   (source mount:source)
-  (target mount:target set-mount:target)) 
+  (target mount:target set-mount:target)
+  (ignore? mount:ignore?)) 
 
 ; Процедура формирует процедуру генерации строкового представления точки
 ; монтирования в текущий порт вывода. Если chroot-dir не пустая строка, то эта
@@ -161,7 +164,8 @@
                   (string-split-ne (micro-field rec "PROPAGATION" "") #\,) 
 ;                  (join-options rec)
                   (unhexify (micro-field rec "SOURCE" ""))
-                  (unhexify (micro-field rec "TARGET" "")))))
+                  (unhexify (micro-field rec "TARGET" ""))
+                  #f)))
 
 (define (findmnt-record-stream chroot-dir)
   (let ((p (open-pipe* OPEN_READ "findmnt" "-PAo" "TARGET,SOURCE,FSTYPE,OPTIONS,PROPAGATION")))
@@ -188,7 +192,15 @@
  
 ; Формирование структуры с описанием точки монтирования из сырых данных.
 ; Предполагается, что options заданы строкой
-(define (make-mount-record type options source target)
+(define* (make-mount-record type options source target #:optional (ignore? #f))
   (let ((opts (option-list options (bind-ro? type))))
     (receive (p o) (partition propagation? opts)
-      (mount-record type o p source target))))
+      (mount-record type o p source target ignore?))))
+
+; Красивый вывод информации о точке монтирования
+(define (pretty-mount r)
+  (format #f "~A -o ~A ~A → ~A"
+          (mount:type r)
+          (string-join (append (mount:options r) (mount:propagations r)) ",")
+          (mount:source r)
+          (mount:target r))) 

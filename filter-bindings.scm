@@ -35,13 +35,7 @@
 (define dump-port
   (fdes->outport (string->number (get-param (command-line) 1 "1"))))
 
-; Красивый вывод информации о точке монтирования
-(define (pretty-mount r)
-  (format #f "~A -o ~A ~A → ~A"
-          (mount:type r)
-          (string-join (append (mount:options r) (mount:propagations r)) ",")
-          (mount:source r)
-          (mount:target r)))
+
 
 ; Проверка значения на логическую истинность
 (define (true? v) (and (boolean? v) v))

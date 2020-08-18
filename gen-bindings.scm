@@ -51,6 +51,7 @@
 (add-to-load-path (let ((fn (current-filename))) (if (string? fn) (dirname fn) "."))) 
 
 (use-modules (ice-9 popen)
+             (ice-9 receive)
              (srfi srfi-1)
              (srfi srfi-41)
              (lact utils)
@@ -134,7 +135,8 @@
          (fs (micro-field mr "fs" "bind")) 
          (t (micro-field mr "tgt" ""))
          (s (micro-field mr "src" (default-source fs t)))
-         (o (micro-field mr "opt" (default-options fs))))
+         (o (micro-field mr "opt" (default-options fs)))
+         (i? (micro-field mr "ignore" "no")))
     (if (or (string-null? t)
             (string-null? s))
         ; Если один из путей пустой, это ошибка. Возвращаем строку с сообщением
@@ -147,7 +149,7 @@
             (format #f "Parsing record: ~A. Source or target path is not absolute"
                     (micro-record->string rec))
             ; Проверки пройдены, формируем структуру
-            (make-mount-record fs o (repath s) (repath t))))))
+            (make-mount-record fs o (repath s) (repath t) (string=? i? "yes"))))))
 
 ; Процедура разбора строки в μ-json формате в список записей о точках
 ; монтирования.
@@ -233,6 +235,7 @@
                         "tgt:/sys"
                         "tgt:/dev src:dev fs:devtmpfs opt:private"
 
+                        ; "tgt:/dev/shm" 
                         ; Правка внесена под особенности файловой системы
                         ; Debian 7. /dev/shm является в нём символической
                         ; ссылкой на /run/shm. Поэтому /dev/shm просто
@@ -241,7 +244,10 @@
                         ; должно считаться нормальным поведением. FIXME.2:
                         ; вычисляется на этапе загрузки/компиляции.
                         ,(string-append "tgt:" (normalize-path "/dev/shm"))
-
+                        
+                        ; Тест на игнорирование
+                        ; "tgt:/dev/shm ignore:yes"
+                        
                         "tgt:/dev/pts"
                         "tgt:/lib/init/rw"
                         "tgt:/run/systemd/journal"))
@@ -263,6 +269,26 @@
 
 ; СБОР ВСЕГО ВМЕСТЕ В ПРОЦЕДУРУ ГЕНЕРАЦИИ СПИСКА МОНТИРОВАНИЯ
 
+; Сборка всех списков записей о монтировании в один список с учётом целей
+; монтирования. Если у двух записей цели монтирования совпадают, то последующая
+; запись замещает предыдущую. В итоге, получается список последних записей о
+; точке монтирования
+(define (gather-targets records)
+  (let ((keyed-records (map mount-record->kv-pair (concatenate records))))
+    (map mnt (table->kv-list (table-append table-null keyed-records)))))
+
+; Чистка списка записей монтирования от игнорируемых элементов
+(define (drop-ignored records)
+  (receive (ignored accepted) (partition mount:ignore? records)
+    (when (inhabited? ignored)
+      (dump-error "Ignoring targets:~%")
+      (for-each (lambda (i) (dump-error "~/~a~%" (pretty-mount i))) ignored)
+      (dump-error "~%"))
+    accepted))
+
+(define (target-at-chroot? dir)
+  (lambda (p) (string-prefix? dir (mount:target p))))
+
 (define (up-execute)
   ; (dump-error "up-execute HERE~%")
   ; Составляем список всех добытых из конфигурации строк, каждую из которых
@@ -273,26 +299,36 @@
                           (strings-from-vars params-path)))
          (records (map string->mount-record-list strings))
          (errors (filter (compose string? first) records)))
-    ; (dump-error "READ records. Errors: ~a~%" errors)
     (if (not (null? errors))
       ; Если обнаружены ошибки, выбрасываем их в стандартный lact-обработчик
       (throw 'parse-error errors)
-      ; Если не обнаружены, загружаем все записи в таблицу по ключам, которые
-      ; соответствуют целям монтирования, затем распечатываем эту таблицу
-      (let* ((canonical (canonicalize-targets chroot-dir (concatenate records)))
-             (keyed-records (map mount-record->kv-pair canonical))
-             (t-all (table-append table-null keyed-records))
-             ; Порядок монтирования должен определяться целями, чтобы
-             ; смонтировать /p/q, сначала нужно смонтировать /p, если нужно
-             (order (lambda (a b) (string<? (tgt a) (tgt b))))
-             (b-all (sort (table->kv-list t-all) order)))
-        (with-output-to-port dump-port
-          (lambda ()
-            ; Из каждой записи в b-all извлекаем запись о точке монтирования, и
-            ; передаём её на вход в функцию (dump-mnt chroot-dir), которая
-            ; выводит эти записи в текущий порт вывода, который перенастроен
-            ; функцией with-output-to-port
-            (for-each (compose (dump-mnt "" DUMP-BOTH) mnt) b-all)))))))
+      ; Если всё хорошо, то нужно собрать все записи с учётом их целей,
+      ; выбросить игнорируемые точки монтирования, разрешить пути в физические,
+      ; и проверить на то, что все физические пути ведут в chroot-окружение
+      (let* ((canonical
+               (canonicalize-targets chroot-dir
+                                     (drop-ignored (gather-targets records))))
+             (misses (filter (compose not (target-at-chroot? chroot-dir)) canonical)))
+        (if (inhabited? misses) 
+          ; Если обнаружились целевые пути, которые не ведут в
+          ; chroot-директорию, сообщаем об этом. Некоторая обработка нужна,
+          ; чтобы удовлетворить интерфейсу обработчика 'parse-error
+          (throw 'parse-error
+                 (map (lambda (p)
+                        (list (mount:target p) "Not at the chroot scope"))
+                      misses))
+          ; Если всё распечатываем список монтирования в необходимом порядке:
+          ; чтобы смонтировать /p/q, сначала нужно смонтировать /p, если нужно 
+          (let ((order (lambda (a b) (string<? (mount:target a) (mount:target b)))))
+            (with-output-to-port dump-port
+                                 (lambda ()
+                                   ; Запись о точке монтирования передаём на
+                                   ; вход в функцию (dump-mnt chroot-dir
+                                   ; DUMP-BOTH), которая выводит эти записи в
+                                   ; текущий порт вывода, который перенастроен
+                                   ; функцией with-output-to-port
+                                   (for-each (dump-mnt "" DUMP-BOTH)
+                                             (sort canonical order))))))))))
 
 ; ГЕНЕРАЦИЯ СПИСКА ДЕМОНТИРОВАНИЯ
 
