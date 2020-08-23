@@ -1286,7 +1286,8 @@ create_execute () {
   # debootstrap --arch amd64 stretch "$atd" http://ftp.ru.debian.org/debian
 
   # debootstrap --extractor ar --arch amd64 $CHROOT_TOOL_DEBIAN_VERSION "$atd" http://ftp.ru.debian.org/debian
-  cmd="debootstrap --arch amd64 $CHROOT_TOOL_DEBOOTSTRAP_OPTIONS $CHROOT_TOOL_DEBIAN_VERSION $atd http://ftp.ru.debian.org/debian"
+  #cmd="debootstrap --arch amd64 $CHROOT_TOOL_DEBOOTSTRAP_OPTIONS $CHROOT_TOOL_DEBIAN_VERSION $atd http://ftp.ru.debian.org/debian"
+  cmd="debootstrap $CHROOT_TOOL_DEBOOTSTRAP_OPTIONS $CHROOT_TOOL_DEBIAN_VERSION $atd http://ftp.ru.debian.org/debian"
   # почему-то не удалось добавить "" вокруг $atd в этой версии. ну ладно, не гоже иметь чрут-каталогу пробелы.
   echo "calling cmd: $cmd"
   $cmd
@@ -1296,6 +1297,7 @@ create_execute () {
   
   chroot "$atd" dash <<EOF
 set -e
+source /etc/profile # need this if running in ArchLinux host
 apt-get update
 apt-get -y install locales
 grep -e '^en_US.UTF-8 UTF-8$' /etc/locale.gen || echo 'en_US.UTF-8 UTF-8' >> /etc/locale.gen
@@ -1320,10 +1322,10 @@ create () {
 
   # Проверка того, что мы в Debian, что установлено необходимое ПО
 
-  echo -n "Debian checking: " \
-    && source /etc/os-release \
-    && [ "${ID}" = 'debian' ] && echo OK \
-    || { echo FAILED: 'designed to work under Debian'; exit -1; } 
+#  echo -n "Debian checking: " \
+#    && source /etc/os-release \
+#    && [ "${ID}" = 'debian' ] && echo OK \
+#    || { echo FAILED: 'designed to work under Debian'; exit -1; } 
 
   echo -n "debootstrap checking: " \
     && test -x '/usr/sbin/debootstrap' && echo OK \
