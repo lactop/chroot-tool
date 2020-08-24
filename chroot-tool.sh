@@ -1286,10 +1286,10 @@ create_execute () {
   # debootstrap --arch amd64 stretch "$atd" http://ftp.ru.debian.org/debian
 
   # debootstrap --extractor ar --arch amd64 $CHROOT_TOOL_DEBIAN_VERSION "$atd" http://ftp.ru.debian.org/debian
-  #cmd="debootstrap --arch amd64 $CHROOT_TOOL_DEBOOTSTRAP_OPTIONS $CHROOT_TOOL_DEBIAN_VERSION $atd http://ftp.ru.debian.org/debian"
-  cmd="debootstrap $CHROOT_TOOL_DEBOOTSTRAP_OPTIONS $CHROOT_TOOL_DEBIAN_VERSION $atd http://ftp.ru.debian.org/debian"
-  # почему-то не удалось добавить "" вокруг $atd в этой версии. ну ладно, не гоже иметь чрут-каталогу пробелы.
-  echo "calling cmd: $cmd"
+  # cmd="debootstrap --arch amd64 $CHROOT_TOOL_DEBOOTSTRAP_OPTIONS $CHROOT_TOOL_DEBIAN_VERSION $atd http://ftp.ru.debian.org/debian"
+  cmd="debootstrap $CHROOT_TOOL_DEBOOTSTRAP_OPTIONS $CHROOT_TOOL_DEBIAN_VERSION '$atd' http://ftp.ru.debian.org/debian"
+
+  echo "Executing cmd: $cmd"
   $cmd
   
   # todo - move locale ru_RU.UTF-8 UTF-8 so on - to params!
