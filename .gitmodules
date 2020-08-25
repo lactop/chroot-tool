@@ -1,0 +1,3 @@
+[submodule "lact"]
+	path = lact
+	url = git@github.com:lactop/guile-lact.git

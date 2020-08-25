@@ -121,15 +121,14 @@
          ; был немного проще Два действия: mismatch и ok. mismatch добавит
          ; описание ошибки к текущему описанию, а маркер к текущему набору
          ; маркеров; ok ничего не добавит
-         (mismatch (lambda (marker fmt . args)
-                     (let ((err (apply format #f fmt args)))
-                       (lambda (markers reasons)
-                         (values (kit-cons marker markers)
-                                 (if (string-null? reasons)
-                                     err
-                                     (string-append/shared reasons
-                                                           "; "
-                                                           err)))))))
+         (mismatch
+           (lambda (marker fmt . args)
+             (let ((err (apply format #f fmt args)))
+               (lambda (markers reasons)
+                 (values (kit-cons marker markers)
+                         (if (string-null? reasons)
+                             err
+                             (string-append/shared reasons "; " err)))))))
          (ok values)
 
          (check-sources
