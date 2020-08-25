@@ -1,6 +1,6 @@
 ; Модуль для работы с таблицами из пар (ключ значение)
 
-(define-module (lact table)
+(define-module (lib table)
                #:use-module (ice-9 vlist)
                #:use-module (srfi srfi-1)
                #:export (key val 

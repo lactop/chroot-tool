@@ -1,6 +1,6 @@
 ; Модуль для разбора строк в формате, названном microjson (μ-json)
 
-(define-module (lact microjson)
+(define-module (lib microjson)
                #:export (micro-parse micro-field micro-record->string seq)
                #:use-module (srfi srfi-1)
                #:use-module (lact utils))

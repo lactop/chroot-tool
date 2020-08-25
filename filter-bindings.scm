@@ -20,10 +20,10 @@
              (srfi srfi-41)
              (srfi srfi-9 gnu)
              (lact utils)
-             (lact table)
-             (lact mounts)
+             (lact kit)
              (lact error-handling)
-             (lact kit))
+             (lib table)
+             (lib mounts))
 
 ; ВЫВОДИТЬ ЛИ МНОГО ИНФОРМАЦИИ
 

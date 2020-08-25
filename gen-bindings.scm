@@ -56,12 +56,12 @@
              (srfi srfi-41)
              (lact utils)
              (lact fs)
-             (lact table)
-             (lact microjson)
              (lact error-handling)
-             (lact sourcing env)
-             (lact sourcing conf)
-             (lact mounts))
+             (lib table)
+             (lib microjson)
+             (lib sourcing env)
+             (lib sourcing conf)
+             (lib mounts))
 
 ; Вывод сообщение с информацией об использовании gen-bindings
 (define (usage str)

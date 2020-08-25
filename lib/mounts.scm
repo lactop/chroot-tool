@@ -1,4 +1,4 @@
-(define-module (lact mounts)
+(define-module (lib mounts)
                #:use-module (ice-9 popen)
                #:use-module (ice-9 iconv)
                #:use-module (ice-9 regex)
@@ -6,10 +6,10 @@
                #:use-module (srfi srfi-1)
                #:use-module (srfi srfi-9 gnu) 
                #:use-module (srfi srfi-41)
-               #:use-module (lact microjson)
                #:use-module (lact utils)
                #:use-module (lact fs)
                #:use-module (lact error-handling)
+               #:use-module (lib microjson) 
                #:export (mount-record make-mount-record mount-record?
                          set-mount:type mount:type
                          mount:options set-mount:options

@@ -2,7 +2,7 @@
 ; программами. В текущей версии источником служат shell-скрипты, формирующие
 ; наборы переменных окружения.
 
-(define-module (lact sourcing env)
+(define-module (lib sourcing env)
                #:use-module ((ice-9 popen) #:select (open-input-pipe))
                #:use-module (ice-9 rdelim)
                #:use-module (srfi srfi-1)

@@ -1,6 +1,6 @@
 ; Процедуры загрузки данных из файлов с типичной ini-структурой
 
-(define-module (lact sourcing conf)
+(define-module (lib sourcing conf)
                #:use-module (ice-9 vlist)
                #:use-module (srfi srfi-41)
                #:use-module (srfi srfi-9)
