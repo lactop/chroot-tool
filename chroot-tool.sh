@@ -1280,6 +1280,7 @@ create_execute () {
 
   CHROOT_TOOL_DEBIAN_VERSION="${CHROOT_TOOL_DEBIAN_VERSION:-buster}"
   CHROOT_TOOL_DEBIAN_ARCH="${CHROOT_TOOL_DEBIAN_ARCH:-amd64}"
+  CHROOT_TOOL_TIME_ZONE="${CHROOT_TOOL_TIME_ZONE:-Asia/Yekaterinburg}"
   # idea - do wee need an --arch at all??
 
   # todo maybe just cmd line args?
@@ -1287,7 +1288,9 @@ create_execute () {
 
   # debootstrap --extractor ar --arch amd64 $CHROOT_TOOL_DEBIAN_VERSION "$atd" http://ftp.ru.debian.org/debian
   # cmd="debootstrap --arch amd64 $CHROOT_TOOL_DEBOOTSTRAP_OPTIONS $CHROOT_TOOL_DEBIAN_VERSION $atd http://ftp.ru.debian.org/debian"
-  cmd="debootstrap $CHROOT_TOOL_DEBOOTSTRAP_OPTIONS $CHROOT_TOOL_DEBIAN_VERSION '$atd' http://ftp.ru.debian.org/debian"
+  # cmd="debootstrap $CHROOT_TOOL_DEBOOTSTRAP_OPTIONS $CHROOT_TOOL_DEBIAN_VERSION '$atd' http://ftp.ru.debian.org/debian"
+  # по какой-то причине на stretch (лепшем) экранирование '$atd' в кавычках ' дебутсрап не может проглотить
+  cmd="debootstrap $CHROOT_TOOL_DEBOOTSTRAP_OPTIONS $CHROOT_TOOL_DEBIAN_VERSION $atd http://ftp.ru.debian.org/debian"
 
   echo "Executing cmd: $cmd"
   $cmd
@@ -1295,8 +1298,13 @@ create_execute () {
   # todo - move locale ru_RU.UTF-8 UTF-8 so on - to params!
   # or just outside from here - to chroota.zdb
   
-  chroot "$atd" dash <<EOF
-set -e
+  echo "Chroot-tool: calling chroot-tool specific setup things inside chroot env in dir $atd"
+  
+  # for some reason, got error "dash: source not found"
+  # internet says that dash does not support source command
+  # how is that worked at all?
+  chroot "$atd" bash <<EOF
+set -ex
 source /etc/profile # need this if running in ArchLinux host
 apt-get update
 apt-get -y install locales
@@ -1304,7 +1312,7 @@ grep -e '^en_US.UTF-8 UTF-8$' /etc/locale.gen || echo 'en_US.UTF-8 UTF-8' >> /et
 grep -e '^ru_RU.UTF-8 UTF-8$' /etc/locale.gen || echo 'ru_RU.UTF-8 UTF-8' >> /etc/locale.gen
 locale-gen
 echo 'export LANG=en_US.UTF-8' > /etc/profile.d/set-locale.sh
-ln -sf /usr/share/zoneinfo/Asia/Yekaterinburg /etc/localtime
+ln -sf /usr/share/zoneinfo/$CHROOT_TOOL_TIME_ZONE /etc/localtime
 mkdir -p /chroot.d
 EOF
 }
@@ -1447,11 +1455,23 @@ run () {
 #    -a -d "$CFG_DIR" \
 #    -a -f "$CFG_DIR/$RUN_CMD"  
   
-  if ! test \
-    -d "$WRK_DIR" \
-    -a -d "$CFG_DIR" # -a -f "$CFG_DIR/$RUN_CMD" команды не проверять. Можно конечно таки требовать наличие файла, но тогда надо уметь подавать параметр команду.. Ну либо проверять только первую часть, а не всю строку.. Кстати вариант.
+#  if ! test \
+#    -d "$WRK_DIR" \
+#    -a -d "$CFG_DIR" # -a -f "$CFG_DIR/$RUN_CMD" команды не проверять. Можно конечно таки требовать наличие файла, но тогда надо уметь подавать параметр команду.. Ну либо проверять только первую часть, а не всю строку.. Кстати вариант.
+#  then 
+#    echo "ERROR(chroot-tool): Run parameters are inconsistent. Please check all things exist: work dir, config dir, file of command to run." >&2
+#    exit -1
+#  fi
+  
+  if ! test -d "$WRK_DIR"
   then 
-    echo "ERROR: Run parameters are inconsistent. Please check all things exist: work dir, config dir, file of command to run ($CFG_DIR/$RUN_CMD)." >&2
+    echo "ERROR(chroot-tool): work directory does not exist!" >&2
+    exit -1
+  fi
+  
+  if ! test -d "$CFG_DIR"
+  then 
+    echo "ERROR(chroot-tool): configuration dir does not exist!" >&2
     exit -1
   fi
 
