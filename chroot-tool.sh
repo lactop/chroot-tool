@@ -98,7 +98,7 @@ usage () {
 # Пример использования: su_run cat "/etc/passwd"
 
 su_run () {
-  echo "SU_RUN: $2" &>2
+  # echo "SU_RUN: $2" >&2
   if test $(id -u) -eq 0
   then
     # Если уже работаем от имени root, ничего особенного не предпринимаем
@@ -956,8 +956,8 @@ make_tmp_678 () {
   # echo "exec $(($base_fd))>'$name' $(($base_fd + 1))<'$name' $((base_fd + 2))<'$name'"
   eval "exec $(($base_fd))>'$name' $(($base_fd + 1))<'$name' $((base_fd + 2))<'$name'"
   unlink "$name"
-  echo "after make_tmp $1"
-  ls -la /proc/$$/fd
+  # echo "after make_tmp $1"
+  # ls -la /proc/$$/fd
 }
 
 # Процедура вывода информации о точке монтирования
