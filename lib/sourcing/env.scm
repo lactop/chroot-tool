@@ -65,8 +65,8 @@
     (close-input-port (to-read p))
     ; Выполняем команду. Первый элемент в списке команд -- это argv[0]
     (let ((cl (cmd-line file (port->fdes (to-write p)))))
-      ; (dump-error "command: ~S~%" cl)
-      (execl "/bin/sh" "/bin/sh" "-c" cl)))
+      (dump-error "command: ~S~%" cl)
+      (execl "/usr/bin/bash" "/bin/sh" "-c" cl)))
 
   ; Процедура родительского процесса
   (define (run-parent p pid)
@@ -96,7 +96,10 @@
       (run-parent p pid))))
 
 (define (source-bash file)
-  (stream->list (stream-map (lambda (s) (split-var-string #\= s)) (env-stream file))))
+  (dump-error "bash sourcing: ~s~%" file)
+  (let ((result (stream->list (stream-map (lambda (s) (split-var-string #\= s)) (env-stream file)))))
+    (dump-error "complete~%")
+    result))
 
 ; FIXME: это должно быть на видном месте.
 ;
