@@ -66,7 +66,7 @@
     ; Выполняем команду. Первый элемент в списке команд -- это argv[0]
     (let ((cl (cmd-line file (port->fdes (to-write p)))))
       (dump-error "command: ~S~%" cl)
-      (execl "/usr/bin/bash" "/bin/sh" "-c" cl)))
+      (execl "/bin/bash" "/bin/sh" "-c" cl)))
 
   ; Процедура родительского процесса
   (define (run-parent p pid)
